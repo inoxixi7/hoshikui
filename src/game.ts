@@ -422,6 +422,7 @@ export class Game {
       2.6,
       (k, raw) => {
         this.relic.coreBurst = Math.min(1.4, raw * 2);
+        this.relic.setCoreCrack(Math.min(1, raw * 1.5));
         const p = start.clone().lerp(target, k);
         // Curve the path slightly upward so it reads as a pull, not a slide.
         p.y += Math.sin(raw * Math.PI) * 2.2;
@@ -433,6 +434,7 @@ export class Game {
       ease.inQuad,
     );
     star.visible = false;
+    this.relic.starGone = true;
     this.flashEl.classList.add('on');
     await this.anim.wait(0.25);
     this.flashEl.classList.remove('on');
@@ -457,6 +459,7 @@ export class Game {
     this.relic.hover = 0;
     this.relic.coreBurst = 0;
     this.relic.setGlowAll(0);
+    this.relic.setCoreCrack(0);
     void this.anim.tween(1.5, (k) => this.stage.setStarPresence(k), ease.inOutSine, false);
     await this.loadLevel(0, 'title');
   }

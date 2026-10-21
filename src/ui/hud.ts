@@ -266,12 +266,12 @@ function chapterGlyph(i: number, done: boolean): string {
   const pts: [number, number][] = [];
   for (let k = 0; k < n; k++) {
     const a = n === 1 ? 0 : -Math.PI / 2 + (k / n) * Math.PI * 2;
-    const r = n === 1 ? 0 : n === 2 ? 5 : 6.5;
+    const r = n === 1 ? 0 : n === 2 ? 7 : 10.5;
     pts.push([20 + Math.cos(a) * r, 20 + Math.sin(a) * r]);
   }
-  const lines = n > 1 ? `<polyline points="${[...pts, pts[0]].map((p) => p.join(',')).join(' ')}" fill="none" stroke="currentColor" stroke-width="0.9" opacity="0.45"/>` : '';
+  const lines = n > 1 ? `<polyline points="${[...pts, pts[0]].map((p) => p.join(',')).join(' ')}" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.45"/>` : '';
   const star = (x: number, y: number, s: number) =>
     `<path d="M${x} ${y - s}L${x + s * 0.28} ${y - s * 0.28}L${x + s} ${y}L${x + s * 0.28} ${y + s * 0.28}L${x} ${y + s}L${x - s * 0.28} ${y + s * 0.28}L${x - s} ${y}L${x - s * 0.28} ${y - s * 0.28}Z" fill="currentColor"/>`;
-  const dots = pts.map(([x, y]) => (done ? star(x, y, 3.6) : `<circle cx="${x}" cy="${y}" r="2.1" fill="currentColor"/>`)).join('');
+  const dots = pts.map(([x, y]) => (done ? star(x, y, 5) : `<circle cx="${x}" cy="${y}" r="3" fill="currentColor"/>`)).join('');
   return `<svg viewBox="0 0 40 40" aria-hidden="true">${lines}${dots}</svg>`;
 }

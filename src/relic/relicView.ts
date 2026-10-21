@@ -112,7 +112,10 @@ export class RelicView {
   private dropletNode: string;
   private dropletLocal = new THREE.Vector3();
   coreBurst = 0;
+  private coreShards: { mesh: THREE.Mesh; dir: THREE.Vector3; spin: THREE.Vector3 }[] = [];
   private rolling = false;
+  /** Set when the star has been swallowed: no more beams. */
+  starGone = false;
   private glowAll = 0;
 
   constructor(
@@ -157,7 +160,7 @@ export class RelicView {
     for (const e of level.edges) {
       const a = v3(nodePos(level, e.a));
       const b = v3(nodePos(level, e.b));
-      const mat = e.hidden ? revealMat.clone() : grooveMat;
+      const mat = e.hidden ? revealMat.clone() : e.requiresPlates ? grooveMat.clone() : grooveMat;
       const segA = segmentMesh(a, b, e.hidden ? 0.017 : 0.011, mat);
       segA.renderOrder = INNER_ORDER;
       this.inner.add(segA);
@@ -700,7 +703,21 @@ export class RelicView {
       if (!e.gate) continue;
       const want = platesMatch(plates, e.gate) ? 0.5 : 0.3;
       const g0 = e.gap;
-      if (Math.abs(want - g0) > 1e-3) jobs.push(this.anim.tween(0.3, (k) => (e.gap = g0 + (want - g0) * k), ease.outQuad));
+      if (Math.abs(want - g0) < 1e-3) continue;
+      jobs.push(this.anim.tween(0.3, (k) => (e.gap = g0 + (want - g0) * k), ease.outQuad));
+      // The groove flashes the shard's blue so the link between them reads.
+      const m = e.segA.material as THREE.MeshBasicMaterial;
+      const vein = new THREE.Color(PALETTE.vein);
+      const groove = new THREE.Color(PALETTE.groove);
+      void this.anim.tween(
+        0.9,
+        (k) => {
+          m.color.copy(vein).lerp(groove, k);
+          m.opacity = 0.3 + 0.6 * (1 - k);
+        },
+        ease.inQuad,
+        false,
+      );
     }
     await Promise.all(jobs);
   }
@@ -771,6 +788,28 @@ export class RelicView {
 
   setVeins(count: number) {
     this.veins.forEach((v, i) => (v.lit = i < count ? 1 : 0));
+  }
+
+  /** Ending: the core splits into drifting shards around a bare light (0..1). */
+  setCoreCrack(k: number) {
+    if (!this.coreShards.length) {
+      const geo = new THREE.TetrahedronGeometry(0.05, 0);
+      const mat = innerMat(PALETTE.core, 0.95);
+      for (let i = 0; i < 12; i++) {
+        const dir = new THREE.Vector3(Math.sin(i * 2.4) * Math.cos(i), Math.cos(i * 1.7), Math.sin(i * 1.3)).normalize();
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = INNER_ORDER + 1;
+        mesh.scale.setScalar(0.6 + ((i * 37) % 10) / 12);
+        this.inner.add(mesh);
+        this.coreShards.push({ mesh, dir, spin: new THREE.Vector3(i % 3, (i + 1) % 2, 1).multiplyScalar(0.8) });
+      }
+    }
+    this.core.visible = k < 0.05;
+    for (const sh of this.coreShards) {
+      sh.mesh.visible = k >= 0.05;
+      sh.mesh.position.copy(this.core.position).addScaledVector(sh.dir, 0.05 + k * 0.32);
+      sh.mesh.rotation.set(sh.spin.x * k * 4 + this.time * 0.3, sh.spin.y * k * 4, sh.spin.z * k * 4);
+    }
   }
 
   setGlowAll(v: number) {
@@ -938,7 +977,7 @@ export class RelicView {
         blockedLevel = 1;
       }
     }
-    const strength = Math.max(c.level, blockedLevel * 0.6);
+    const strength = this.starGone ? 0 : Math.max(c.level, blockedLevel * 0.6);
     c.beam.visible = strength > 0.01 && this.root.visible;
     if (c.beam.visible) {
       c.beam.position.copy(hit);
