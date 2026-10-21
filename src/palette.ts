@@ -3,7 +3,7 @@ export const PALETTE = {
   skyTop: 0x161c52,
   skyMid: 0x090b26,
   skyBottom: 0x020208,
-  stone: 0x34313d,
+  stone: 0x433f53,
   stoneDeep: 0x1b1a22,
   pedestal: 0x23222b,
   vein: 0x55c2ff, // interactive only: hinges, crack rims

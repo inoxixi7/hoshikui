@@ -7,7 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PALETTE } from '../palette';
-import { STAR_DIR } from '../puzzle/rules';
+import { STAR_DIR, VIEW_DIR } from '../puzzle/rules';
 import { glowTexture, shadowTexture, starTexture } from './textures';
 
 export const IS_MOBILE =
@@ -15,13 +15,18 @@ export const IS_MOBILE =
   (window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
 
 export const PEDESTAL_TOP = 0;
-export const RELIC_TARGET = new THREE.Vector3(0, 0.8, 0);
-const STAR_DISTANCE = 46;
+export const RELIC_TARGET = new THREE.Vector3(0, 0.75, 0);
+const STAR_DISTANCE = 50;
+const VIEW = new THREE.Vector3(...VIEW_DIR);
+const CAMERA_DISTANCE = 14;
 
 export class Stage {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.PerspectiveCamera;
+  /** Sky, stars and the star live in a perspective backdrop behind the orthographic stage. */
+  readonly backdrop = new THREE.Scene();
+  readonly backCam = new THREE.PerspectiveCamera(64, 1, 0.1, 200);
+  readonly camera: THREE.OrthographicCamera;
   readonly controls: OrbitControls;
   /** Everything that floats together: pedestal, relic, shadow. */
   readonly floating = new THREE.Group();
@@ -34,7 +39,8 @@ export class Stage {
   private skyMat!: THREE.ShaderMaterial;
   private shaft: THREE.Mesh;
   private debris: THREE.Mesh[] = [];
-  private baseDistance = 7;
+  private halfHeight = 2.2;
+  private interacting = false;
   private time = 0;
   readonly shadow: THREE.Mesh;
 
@@ -45,25 +51,31 @@ export class Stage {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(44, 1, 0.1, 200);
-    // Looking roughly toward the star, so it hangs just above the relic.
-    this.camera.position.set(0.352, 0.342, 0.871).multiplyScalar(7).add(RELIC_TARGET);
+    // A fixed isometric, orthographic view: overlaps on screen are exact, which is
+    // what lets lit veins join grooves the way paths join in an impossible drawing.
+    this.camera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 60);
+    this.camera.position.copy(VIEW).multiplyScalar(CAMERA_DISTANCE).add(RELIC_TARGET);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.copy(RELIC_TARGET);
     this.controls.enablePan = false;
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.rotateSpeed = 0.6;
-    this.controls.minPolarAngle = 0.18 * Math.PI;
-    this.controls.maxPolarAngle = 0.47 * Math.PI;
+    this.controls.dampingFactor = 0.1;
+    this.controls.rotateSpeed = 0.55;
+    this.controls.minPolarAngle = 0.12 * Math.PI;
+    this.controls.maxPolarAngle = 0.48 * Math.PI;
+    this.controls.minZoom = 0.8;
+    this.controls.maxZoom = 1.6;
     this.controls.zoomSpeed = 0.6;
+    // Peeking around is allowed, but the view always drifts back to the true angle.
+    this.controls.addEventListener('start', () => (this.interacting = true));
+    this.controls.addEventListener('end', () => (this.interacting = false));
 
     this.skyMat = this.buildSky();
     this.starsMat = this.buildStarfield();
 
     // The star: the single light source of the world.
-    this.starPos = new THREE.Vector3(...STAR_DIR).multiplyScalar(STAR_DISTANCE).add(RELIC_TARGET);
+    this.starPos = new THREE.Vector3(...STAR_DIR).multiplyScalar(STAR_DISTANCE);
     this.starSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: starTexture(), color: 0xfff1d6, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }),
     );
@@ -74,23 +86,25 @@ export class Stage {
     );
     this.starHalo.scale.setScalar(20);
     this.starHalo.position.copy(this.starPos);
-    this.scene.add(this.starHalo, this.starSprite);
+    this.backdrop.add(this.starHalo, this.starSprite);
 
     // A faint permanent shaft from the star, so its role as light source reads at a glance.
     this.shaft = this.buildShaft();
     this.scene.add(this.shaft);
 
     // Lighting: a warm key from the star, cold fill from below, dim ambient.
-    const key = new THREE.DirectionalLight(0xffe2b5, 2.4);
+    // Lighting reads like a carved drawing: bright tops, mid right faces, deep left faces,
+    // plus a warm rim from the star behind.
+    const top = new THREE.DirectionalLight(0xe2deff, 2.3);
+    top.position.set(0.5, 4, 1.2);
+    const right = new THREE.DirectionalLight(0x9da2ff, 1.25);
+    right.position.set(4, 0.8, 0.6);
+    const left = new THREE.DirectionalLight(0x6a6fd8, 0.55);
+    left.position.set(0.4, 0.6, 4);
+    const key = new THREE.DirectionalLight(0xffd59a, 1.6);
     key.position.copy(new THREE.Vector3(...STAR_DIR).multiplyScalar(10));
-    const fill = new THREE.DirectionalLight(0x6f7cff, 0.55);
-    fill.position.set(2, -1.5, 4);
-    const rim = new THREE.DirectionalLight(0x9aa6ff, 0.9);
-    rim.position.set(3, 2, -4);
-    const front = new THREE.DirectionalLight(0xb8bcff, IS_MOBILE ? 1.5 : 1.0);
-    front.position.set(3, 4, 6);
-    const amb = new THREE.HemisphereLight(0x4a4f9a, 0x0a0812, 1.0);
-    this.scene.add(key, fill, rim, front, amb);
+    const amb = new THREE.HemisphereLight(0x3c4090, 0x0a0812, 0.9);
+    this.scene.add(top, right, left, key, amb);
 
     this.scene.add(this.floating);
     this.buildPedestal();
@@ -153,7 +167,7 @@ export class Stage {
     const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 32, 24), mat);
     sky.frustumCulled = false;
     sky.renderOrder = -10;
-    this.scene.add(sky);
+    this.backdrop.add(sky);
     return mat;
   }
 
@@ -199,7 +213,7 @@ export class Stage {
     const pts = new THREE.Points(g, mat);
     pts.frustumCulled = false;
     pts.renderOrder = -9;
-    this.scene.add(pts);
+    this.backdrop.add(pts);
     return mat;
   }
 
@@ -282,7 +296,11 @@ export class Stage {
 
   private setupBloom() {
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.composer.addPass(new RenderPass(this.backdrop, this.backCam));
+    const main = new RenderPass(this.scene, this.camera);
+    main.clear = false;
+    main.clearDepth = true;
+    this.composer.addPass(main);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.85, 0.55, 0.62);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -297,21 +315,23 @@ export class Stage {
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     this.composer?.setSize(w, h);
-    this.camera.aspect = w / h;
-    // Shift the frame up so the relic sits low and the star hangs above it.
-    this.camera.setViewOffset(w, h, 0, -h * 0.07, w, h);
-    // Keep the relic and pedestal framed on both landscape and portrait screens.
-    const halfV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const needH = 3.9 / (2 * halfV);
-    const needW = 3.3 / (2 * halfV * this.camera.aspect);
-    const prev = this.baseDistance;
-    this.baseDistance = Math.max(needH, needW);
-    this.controls.minDistance = this.baseDistance * 0.72;
-    this.controls.maxDistance = this.baseDistance * 1.45;
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    offset.setLength((offset.length() / prev) * this.baseDistance);
-    this.camera.position.copy(this.controls.target).add(offset);
+    const aspect = w / h;
+    // Fit relic and pedestal on landscape and portrait screens alike.
+    this.halfHeight = Math.max(2.25, 1.62 / aspect);
+    const shift = this.halfHeight * 0.12; // relic sits a little low, the star above it
+    this.camera.left = -this.halfHeight * aspect;
+    this.camera.right = this.halfHeight * aspect;
+    this.camera.top = this.halfHeight + shift;
+    this.camera.bottom = -this.halfHeight + shift;
     this.camera.updateProjectionMatrix();
+    this.backCam.aspect = aspect;
+    this.backCam.fov = aspect < 1 ? 74 : 62;
+    this.backCam.updateProjectionMatrix();
+  }
+
+  /** Screen-space size of one world unit in CSS pixels (orthographic). */
+  get pixelsPerUnit(): number {
+    return window.innerHeight / ((this.camera.top - this.camera.bottom) / this.camera.zoom);
   }
 
   update(dt: number) {
@@ -325,7 +345,18 @@ export class Stage {
     }
     const pulse = 1 + Math.sin(this.time * 1.3) * 0.04;
     if (this.starSprite.userData.free !== true) this.starSprite.scale.setScalar(11 * pulse);
+    if (!this.interacting) {
+      // Drift back to the true isometric angle and scale.
+      const k = 1 - Math.exp(-dt * 3.5);
+      const off = this.camera.position.clone().sub(this.controls.target);
+      const want = VIEW.clone().multiplyScalar(off.length());
+      off.lerp(want, k).setLength(want.length());
+      this.camera.position.copy(this.controls.target).add(off);
+      this.camera.zoom += (1 - this.camera.zoom) * k;
+      this.camera.updateProjectionMatrix();
+    }
     this.controls.update();
+    this.backCam.quaternion.copy(this.camera.quaternion);
   }
 
   /** 0..1: how present the star is in the sky (it is swallowed in the ending). */
@@ -341,7 +372,13 @@ export class Stage {
 
   render() {
     if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    else {
+      this.renderer.autoClear = false;
+      this.renderer.clear();
+      this.renderer.render(this.backdrop, this.backCam);
+      this.renderer.clearDepth();
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 }
 

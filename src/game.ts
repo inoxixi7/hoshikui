@@ -2,11 +2,11 @@
 
 import * as THREE from 'three';
 import { LEVELS } from './levels';
-import type { Action, GameState, LevelDef } from './puzzle/types';
-import { applyAction, getPose, initialState, isPoseStable, isWon } from './puzzle/rules';
+import type { Action, Dir, GameState, LevelDef } from './puzzle/types';
+import { DIRS, TIP, applyAction, initialState, isStable, isWon, mulMat, type RollStep } from './puzzle/rules';
 import { solve } from './puzzle/solver';
 import { Stage } from './scene/stage';
-import { RelicView, type TopplePlan } from './relic/relicView';
+import { DIR_VEC, RelicView, type TopplePlan } from './relic/relicView';
 import { ShatterField } from './relic/transition';
 import { Hud } from './ui/hud';
 import { PointerInput } from './input/pointer';
@@ -16,17 +16,18 @@ import { type SaveData, clearSave, loadSave, writeSave } from './save';
 
 const MAX_TILT = THREE.MathUtils.degToRad(15);
 const REFUSED_TILT = THREE.MathUtils.degToRad(8);
-const LOOSE_TILT = THREE.MathUtils.degToRad(3.5);
 const IDLE_HINT_S = 30;
 
 interface HistoryEntry {
   prev: GameState;
   action: Action;
-  path: string[];
+  path: RollStep[];
 }
 
+const OPPOSITE: Record<Dir, Dir> = { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' };
+
 interface DragCandidate {
-  pose: string;
+  dir: Dir;
   valid: boolean;
   screen: THREE.Vector2;
   plan: TopplePlan;
@@ -48,7 +49,7 @@ export class Game {
   private refusals = 0;
   private demoShown = false;
   private demoTimer = -1;
-  private drag: { candidates: DragCandidate[]; choice: DragCandidate | null; loose: TopplePlan | null; dist: number } | null = null;
+  private drag: { candidates: DragCandidate[]; choice: DragCandidate | null; dist: number } | null = null;
   private spinSpeed = 0;
   private overlayReturn: 'title' | 'play' = 'play';
   private flashEl: HTMLElement;
@@ -82,7 +83,6 @@ export class Game {
     this.levelIndex = this.resumeIndex();
     this.state = initialState(this.level);
     this.relic = new RelicView(this.level, this.stage.floating, this.state);
-    this.relic.setVeins(this.completedCount);
     this.enterTitle(true);
 
     new PointerInput(canvas, this.stage.camera, this.stage.controls, () => this.relic, {
@@ -91,7 +91,7 @@ export class Game {
       dragStart: () => this.dragStart(),
       dragMove: (dx, dy) => this.dragMove(dx, dy),
       dragEnd: (dx, dy, c) => this.dragEnd(dx, dy, c),
-      tap: (plate, hitRelic) => this.tap(plate, hitRelic),
+      tap: (_plate, hitRelic) => this.tap(hitRelic),
     });
     window.addEventListener('keydown', (e) => this.key(e));
     document.addEventListener('visibilitychange', () => (this.idle = 0));
@@ -109,10 +109,6 @@ export class Game {
 
   private get completedFlags(): boolean[] {
     return LEVELS.map((l) => this.save.completed.includes(l.id));
-  }
-
-  private get completedCount(): number {
-    return this.completedFlags.filter(Boolean).length;
   }
 
   private resumeIndex(): number {
@@ -242,7 +238,6 @@ export class Game {
     this.save.muted = muted;
     this.persist();
     sfx.refuse();
-    this.relic.setVeins(0);
     this.hud.setChapters(this.unlocked, this.completedFlags, this.levelIndex);
     this.refreshHud();
     if (this.levelIndex > this.unlocked) void this.loadLevel(0, 'title');
@@ -277,7 +272,6 @@ export class Game {
     this.history = [];
     this.refusals = 0;
     const next = new RelicView(this.level, this.stage.floating, this.state);
-    next.setVeins(this.completedCount);
     next.update(0);
     const to = next.sampleSurface(IS_LOW() ? 900 : 1600);
     next.setVisible(false);
@@ -310,19 +304,14 @@ export class Game {
     const prev = this.state;
     const r = applyAction(this.level, prev, action);
     if (!r.ok) {
-      await this.refuse(action.type === 'fold' ? action.plate : null);
+      await this.refuse();
       return false;
     }
     this.busy = true;
     this.refusals = 0;
     this.history.push({ prev, action, path: r.path });
     this.hud.setUndoEnabled(true);
-    if (action.type === 'topple') {
-      await this.relic.topple(getPose(this.level, action.to), () => sfx.land());
-    } else {
-      sfx.fold();
-      await Promise.all([this.relic.fold(action.plate, r.state.plates[action.plate] ?? false), this.relic.updateGates(r.state.plates)]);
-    }
+    await this.relic.topple(action.dir, () => sfx.land());
     await this.relic.updateLight(r.state, () => sfx.light());
     if (r.path.length > 1) await this.relic.roll(r.path, (i) => sfx.roll(i));
     this.state = r.state;
@@ -332,11 +321,10 @@ export class Game {
     return true;
   }
 
-  private async refuse(plate: string | null) {
+  private async refuse() {
     sfx.refuse();
     this.refusals++;
-    if (plate) await this.relic.refuseFold(plate);
-    else await this.relic.refuse();
+    await this.relic.refuse();
     if (this.refusals >= 3) {
       this.refusals = 0;
       void this.showDemo();
@@ -356,11 +344,7 @@ export class Game {
     sfx.tap();
     const prev = h.prev;
     const jobs: Promise<void>[] = [this.relic.rewindDroplet(h.path)];
-    if (h.action.type === 'topple') jobs.push(this.relic.topple(getPose(this.level, prev.pose), () => sfx.land()));
-    else {
-      sfx.fold();
-      jobs.push(this.relic.fold(h.action.plate, prev.plates[h.action.plate] ?? false), this.relic.updateGates(prev.plates));
-    }
+    jobs.push(this.relic.topple(OPPOSITE[h.action.dir], () => sfx.land()));
     await Promise.all(jobs);
     await this.relic.updateLight(prev);
     this.state = prev;
@@ -395,12 +379,13 @@ export class Game {
     const idx = this.levelIndex;
     sfx.win();
     const already = this.save.completed.includes(this.level.id);
-    const veinIndex = already ? this.completedCount - 1 : this.completedCount;
+    // Solving level k lights vein k for every later level.
+    const veinIndex = idx;
     if (!already) this.save.completed.push(this.level.id);
     this.save.unlocked = Math.max(this.save.unlocked, Math.min(idx + 1, LEVELS.length - 1));
     this.persist();
     this.hud.burstDot(idx);
-    await this.relic.celebrate(Math.max(0, veinIndex));
+    await this.relic.celebrate(veinIndex);
     this.refreshHud();
     if (idx === LEVELS.length - 1) {
       await this.ending();
@@ -438,7 +423,7 @@ export class Game {
     this.flashEl.classList.add('on');
     await this.anim.wait(0.25);
     this.flashEl.classList.remove('on');
-    this.relic.setVeins(LEVELS.length);
+    this.relic.lightAllVeins();
     this.relic.coreBurst = 0.4;
     this.relic.setGlowAll(0.55);
     this.relic.breath = 1;
@@ -471,17 +456,15 @@ export class Game {
     const next = solve(this.level, this.state)?.[0];
     if (!next) return;
     this.demoShown = true;
-    if (next.type === 'topple') {
-      const a = this.relicCenterScreen();
-      const pose = getPose(this.level, next.to);
-      const dirW = this.relic.toppleDir(pose);
-      const center = this.relic.root.getWorldPosition(new THREE.Vector3());
-      const b2 = this.toScreen(center.clone().addScaledVector(dirW, 1));
-      const v = b2.sub(a).normalize().multiplyScalar(Math.max(120, this.dragThreshold() * 1.6));
-      const b = a.clone().add(v);
-      const plan = this.relic.planTopple(pose);
-      // The relic leans along with the hand, then settles back.
-      void this.anim.tween(
+    const a = this.relicCenterScreen();
+    const center = this.relic.root.getWorldPosition(new THREE.Vector3());
+    const b2 = this.toScreen(center.clone().addScaledVector(DIR_VEC[next.dir], 1));
+    const v = b2.sub(a).normalize().multiplyScalar(Math.max(120, this.dragThreshold() * 1.6));
+    const b = a.clone().add(v);
+    const plan = this.relic.planTopple(next.dir);
+    // The relic leans along with the hand, then settles back.
+    void this.anim
+      .tween(
         1.9,
         (_k, raw) => {
           if (this.drag) return;
@@ -490,22 +473,16 @@ export class Game {
         },
         ease.linear,
         false,
-      ).then(() => !this.drag && this.relic.setTilt(null, 0));
-      await this.hud.showHand(a, b);
-    } else {
-      const hp = this.relic.hingeWorld(next.plate);
-      if (!hp) return;
-      this.relic.setHint({ kind: 'fold', plate: next.plate });
-      this.hinting = true;
-      await this.hud.showHand(this.toScreen(this.floatToWorld(hp)));
-    }
+      )
+      .then(() => !this.drag && this.relic.setTilt(null, 0));
+    await this.hud.showHand(a, b);
   }
 
   private showIdleHint() {
     const next = solve(this.level, this.state)?.[0];
     if (!next) return;
     this.hinting = true;
-    this.relic.setHint(next.type === 'topple' ? { kind: 'topple', to: next.to } : { kind: 'fold', plate: next.plate });
+    this.relic.setHint(next.dir);
   }
 
   // ------------------------------------------------------------ input
@@ -520,16 +497,15 @@ export class Game {
       return;
     }
     this.hud.hideHand();
-    const pose = getPose(this.level, this.state.pose);
     const c = this.relicCenterScreen();
     const center = this.relic.root.getWorldPosition(new THREE.Vector3());
-    const candidates: DragCandidate[] = pose.neighbors.map((id) => {
-      const to = getPose(this.level, id);
-      const dir = this.relic.toppleDir(to);
-      const s = this.toScreen(center.clone().addScaledVector(dir, 0.8)).sub(c);
-      return { pose: id, valid: isPoseStable(to, this.state.plates), screen: s.normalize(), plan: this.relic.planTopple(to) };
+    // Every push tips the relic over the edge on that side; only a face that cannot
+    // hold it (none on the current relics, but the rules allow it) refuses.
+    const candidates: DragCandidate[] = DIRS.map((dir) => {
+      const s = this.toScreen(center.clone().addScaledVector(DIR_VEC[dir], 0.8)).sub(c);
+      return { dir, valid: isStable(this.level, mulMat(TIP[dir], this.state.orient)), screen: s.normalize(), plan: this.relic.planTopple(dir) };
     });
-    this.drag = { candidates, choice: null, loose: null, dist: 0 };
+    this.drag = { candidates, choice: null, dist: 0 };
   }
 
   private dragMove(dx: number, dy: number) {
@@ -543,30 +519,11 @@ export class Game {
       return;
     }
     const v = new THREE.Vector2(dx, dy).normalize();
-    let best: DragCandidate | null = null;
-    let bestCos = 0.55;
-    for (const c of d.candidates) {
-      const cos = c.screen.dot(v);
-      if (cos > bestCos) {
-        bestCos = cos;
-        best = c;
-      }
-    }
+    let best = d.candidates[0];
+    for (const c of d.candidates) if (c.screen.dot(v) > best.screen.dot(v)) best = c;
     d.choice = best;
     const k = 1 - Math.exp(-dist / (this.dragThreshold() * 0.9));
-    if (best) this.relic.setTilt(best.plan, (best.valid ? MAX_TILT : REFUSED_TILT) * k);
-    else {
-      d.loose ??= this.relic.planTopple(null, this.screenToWorldDir(dx, dy));
-      d.loose = this.relic.planTopple(null, this.screenToWorldDir(dx, dy));
-      this.relic.setTilt(d.loose, LOOSE_TILT * k);
-    }
-  }
-
-  private screenToWorldDir(dx: number, dy: number): THREE.Vector3 {
-    const cam = this.stage.camera;
-    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).setY(0).normalize();
-    const fwd = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).setY(0).normalize().negate();
-    return right.multiplyScalar(dx).addScaledVector(fwd, -dy).normalize();
+    this.relic.setTilt(best.plan, (best.valid ? MAX_TILT : REFUSED_TILT) * k);
   }
 
   private dragEnd(dx: number, dy: number, cancelled: boolean) {
@@ -574,11 +531,11 @@ export class Game {
     this.drag = null;
     if (!d) return;
     const dist = Math.hypot(dx, dy);
-    if (cancelled || dist < this.dragThreshold()) {
+    if (cancelled || dist < this.dragThreshold() || !d.choice) {
       if (this.relic.tiltAngle > 0) void this.relic.springBack(false);
       return;
     }
-    if (d.choice?.valid) void this.perform({ type: 'topple', to: d.choice.pose });
+    if (d.choice.valid) void this.perform({ type: 'topple', dir: d.choice.dir });
     else {
       sfx.refuse();
       this.refusals++;
@@ -591,15 +548,14 @@ export class Game {
     }
   }
 
-  private tap(plate: string | null, hitRelic: boolean) {
+  private tap(hitRelic: boolean) {
     const screen = this.hud.current;
     if (screen === 'title') {
       if (hitRelic) void this.startFromTitle();
       return;
     }
     if (screen !== 'play' || this.inputLocked || !hitRelic) return;
-    if (plate) void this.perform({ type: 'fold', plate });
-    else if (this.level.plates.length === 0 && this.history.length === 0 && !this.demoShown) {
+    if (this.history.length === 0 && !this.demoShown) {
       // Tapping the relic instead of dragging it: show how it moves.
       void this.showDemo();
     }
@@ -629,10 +585,7 @@ export class Game {
       this.dragEnd(x * len, y * len, false);
     } else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') void this.undo();
     else if (e.key === 'r' || e.key === 'R') void this.reset();
-    else if (/^[1-9]$/.test(e.key)) {
-      const p = this.level.plates[Number(e.key) - 1];
-      if (p) void this.perform({ type: 'fold', plate: p.id });
-    }
+
   }
 
   // ------------------------------------------------------------ frame
@@ -668,15 +621,10 @@ export class Game {
       hint: () => this.showIdleHint(),
       load: (i: number) => this.loadLevel(i, 'play'),
       relicScreen: () => this.relicCenterScreen(),
-      toppleScreenDir: (to: string) => {
+      toppleScreenDir: (dir: Dir) => {
         const c = this.relicCenterScreen();
         const center = this.relic.root.getWorldPosition(new THREE.Vector3());
-        const dir = this.relic.toppleDir(getPose(this.level, to));
-        return this.toScreen(center.addScaledVector(dir, 0.8)).sub(c).normalize();
-      },
-      hingeScreen: (id: string) => {
-        const p = this.relic.hingeWorld(id);
-        return p ? this.toScreen(this.floatToWorld(p)) : null;
+        return this.toScreen(center.addScaledVector(DIR_VEC[dir], 0.8)).sub(c).normalize();
       },
     };
   }

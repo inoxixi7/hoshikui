@@ -1,48 +1,37 @@
-// Level 3 — 折叠. A wedge whose front face is too thin to stand on. Lifting the
-// shard on its slope extends that face so the relic can rest there — but the
-// open shard also severs the groove the droplet needs first.
+// Level 3 — 错视. The first lit vein runs along the outside of the relic. Turn the
+// relic until a vein end and a groove line up on screen — the droplet crosses there.
 import type { LevelDef } from '../puzzle/types';
-import { flap, plane, vertsFromPlanes } from '../puzzle/geometry';
+import { vertsFromPlanes } from '../puzzle/geometry';
+import { BASE_PLANES, veinsFor } from './relic';
 
-const B = plane([0, -1, 0], 0.55);
-const E = plane([1, 0, 0], 0.8);
-const W = plane([-1, 0, -0.04], 0.8);
-const S = plane([0, 0, 1], 0.6);
-const SLOPE = plane([0, 0.8, 0.6], 0.2);
-
-const planes = [
-  B, E, W, S, SLOPE,
-  plane([0, 0, -1], 0.7), // back
-  plane([0.5, 0.5, -0.7], 0.92),
-  plane([-0.6, 0.35, -0.72], 0.92),
-  plane([-0.6, -0.6, -0.5], 0.85),
-];
-
-const shard = flap(planes, 4, 3, 0.62, 0.1, 'p');
+const planes = [...BASE_PLANES];
 
 export const level3: LevelDef = {
   id: 'l3',
   hullPoints: vertsFromPlanes(planes),
-  poses: [
-    { id: 'B', downNormal: B.n, neighbors: ['E', 'W', 'S'] },
-    { id: 'E', downNormal: E.n, neighbors: ['B', 'S'] },
-    { id: 'W', downNormal: W.n, neighbors: ['B', 'S'] },
-    { id: 'S', downNormal: S.n, neighbors: ['B', 'E', 'W'], requiresPlates: { p: true } },
-  ],
-  plates: [shard],
+  stableFaces: ['px', 'nx', 'py', 'ny', 'pz', 'nz'],
   nodes: [
-    { id: 's', pos: [-0.1, -0.25, -0.35] },
-    { id: 'w', pos: [-0.55, -0.25, -0.35] },
-    { id: 'm', pos: [0.4, -0.25, -0.35] },
-    { id: 'core', pos: [0.4, -0.25, 0.25] },
+    { id: 's', pos: [0.3, 0.3, 0.3] },
+    { id: 'n1', pos: [0.3, 0.3, 0] },
+    { id: 'n2', pos: [0, 0.3, 0.3] },
+    { id: 'n3', pos: [0, 0.3, 0] },
+    { id: 'n4', pos: [0, 0.3, -0.3] },
+    { id: 'n5', pos: [0, 0, 0.3] },
+    { id: 'core', pos: [0.3, 0, 0.3] },
+    { id: 'n7', pos: [-0.3, 0.3, 0.3] },
   ],
   edges: [
-    { a: 'w', b: 's' },
-    { a: 's', b: 'm', requiresPlates: { p: false } },
-    { a: 'm', b: 'core' },
+    { a: 's', b: 'n1' },
+    { a: 's', b: 'n2' },
+    { a: 'n1', b: 'n3' },
+    { a: 'n3', b: 'n4' },
+    { a: 'n2', b: 'n5' },
+    { a: 'n5', b: 'core' },
+    { a: 'n2', b: 'n7' },
   ],
+  veins: veinsFor(2),
   cracks: [],
-  start: { pose: 'B', dropletNode: 's', plates: { p: false } },
+  start: { dropletNode: 's' },
   goal: { dropletNode: 'core' },
   expectedMinMoves: [3, 5],
 };

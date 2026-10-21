@@ -2,8 +2,8 @@
 // A relic is described as an intersection of half-spaces; its hull points are
 // the polytope vertices, so every pose face normal is exact by construction.
 
-import type { PlateDef, Vec3 } from './types';
-import { add, cross, dot, length, normalize, rotateAroundLine, scale, sub } from './math';
+import type { Vec3 } from './types';
+import { add, cross, dot, length, normalize, scale, sub } from './math';
 
 export interface Plane {
   n: Vec3; // outward unit normal
@@ -65,51 +65,6 @@ export function facesAdjacent(pts: Vec3[], n1: Vec3, n2: Vec3): boolean {
   const a = supportPoints(pts, n1);
   const b = supportPoints(pts, n2);
   return a.filter((p) => b.some((q) => length(sub(p, q)) < 1e-4)).length >= 2;
-}
-
-/** Plate outline in its open position (local coordinates). */
-export function openPlateShape(p: PlateDef): Vec3[] {
-  const [a, b] = p.hingeAxis;
-  const angle = (p.openAngle * Math.PI) / 180;
-  return p.shape.map((v) => rotateAroundLine(v, a, sub(b, a), angle));
-}
-
-/**
- * A flap cut from face `on`, hinged on its shared edge with face `toward`.
- * Opening swings it out until it continues the plane of `toward`.
- * `depth` is how far the flap reaches into `on`; `inset` trims the hinge ends.
- */
-export function flap(planes: Plane[], on: number, toward: number, depth: number, inset = 0.12, id = 'p'): PlateDef {
-  const pts = vertsFromPlanes(planes);
-  const A = planes[on], B = planes[toward];
-  const shared = supportPoints(supportPoints(pts, A.n), B.n);
-  if (shared.length < 2) throw new Error('flap: faces are not adjacent');
-  // Extreme points along the shared edge.
-  const dir = normalize(sub(shared[1], shared[0]));
-  shared.sort((p, q) => dot(p, dir) - dot(q, dir));
-  let h0 = shared[0];
-  let h1 = shared[shared.length - 1];
-  const edgeLen = length(sub(h1, h0));
-  h0 = add(h0, scale(dir, edgeLen * inset));
-  h1 = sub(h1, scale(dir, edgeLen * inset));
-  // In-plane direction on face `on`, pointing away from the hinge.
-  let inward = normalize(cross(A.n, dir));
-  const faceCenter = centroid(supportPoints(pts, A.n));
-  if (dot(sub(faceCenter, h0), inward) < 0) inward = scale(inward, -1);
-  const lift = scale(A.n, 0.012);
-  const shape: Vec3[] = [
-    add(h0, lift),
-    add(h1, lift),
-    add(add(h1, scale(inward, depth)), add(lift, scale(dir, -edgeLen * 0.08))),
-    add(add(h0, scale(inward, depth)), add(lift, scale(dir, edgeLen * 0.08))),
-  ];
-  // Opening angle = angle between the two face normals; orient the hinge so a
-  // positive rotation lifts the flap off face `on`.
-  const angle = (Math.acos(Math.max(-1, Math.min(1, dot(A.n, B.n)))) * 180) / Math.PI;
-  let hingeAxis: [Vec3, Vec3] = [add(h0, lift), add(h1, lift)];
-  const probe = rotateAroundLine(shape[2], hingeAxis[0], sub(hingeAxis[1], hingeAxis[0]), 0.2);
-  if (dot(sub(probe, shape[2]), A.n) < 0) hingeAxis = [hingeAxis[1], hingeAxis[0]];
-  return { id, hingeAxis, shape, openAngle: round(angle) };
 }
 
 export function centroid(pts: Vec3[]): Vec3 {

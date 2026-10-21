@@ -1,56 +1,38 @@
-// Level 2 — 星光. The groove to the core is sealed by a hidden channel that only
-// opens while the crown crack faces the star. That pose alone does not finish.
+// Level 2 — 星光. A sealed channel opens only while the crack faces the star.
+// The angle that lets the light in is not the angle that finishes.
 import type { LevelDef } from '../puzzle/types';
 import { plane, vertsFromPlanes } from '../puzzle/geometry';
 import { facingStar } from '../puzzle/rules';
+import { BASE_PLANES, veinsFor } from './relic';
 
-const B = plane([0, -1, 0], 0.6);
-const E = plane([1, 0, 0.05], 0.82);
-const W = plane([-1, 0, 0], 0.82);
-const N = plane([0, 0, -1], 0.6);
-const T = plane([0.3, 1, 0], 0.78);
-const nN = N.n;
-const C = plane(facingStar({ downNormal: nN }), 0.8); // the crown crack faces the star in pose N
-
-const planes = [
-  B, E, W, N, T, C,
-  plane([0, 0.05, 1], 0.62), // front
-  plane([0.55, -0.6, 0.6], 0.95),
-  plane([-0.6, -0.5, -0.6], 0.98),
-  plane([0.6, 0.45, -0.65], 1.02),
-];
+// Faces the star once the relic is turned to [1, 0, 0, 0, -1, 0, 0, 0, -1].
+const CRACK1 = plane(facingStar([1, 0, 0, 0, -1, 0, 0, 0, -1]), 0.8249);
+const planes = [...BASE_PLANES, CRACK1];
 
 export const level2: LevelDef = {
   id: 'l2',
   hullPoints: vertsFromPlanes(planes),
-  poses: [
-    { id: 'B', downNormal: B.n, neighbors: ['E', 'W', 'N'] },
-    { id: 'E', downNormal: E.n, neighbors: ['B', 'N', 'T'] },
-    { id: 'W', downNormal: W.n, neighbors: ['B', 'N'] },
-    { id: 'N', downNormal: nN, neighbors: ['B', 'E', 'W', 'T'] },
-    { id: 'T', downNormal: T.n, neighbors: ['E', 'N'] },
-  ],
-  plates: [],
+  stableFaces: ['px', 'nx', 'py', 'ny', 'pz', 'nz'],
   nodes: [
-    { id: 's', pos: [0, 0.4, 0.25] },
-    { id: 'x', pos: [0.5, 0.4, 0.25] },
-    { id: 'w', pos: [-0.5, 0.4, 0.25] },
-    { id: 'y', pos: [0.5, 0.4, -0.3] },
-    { id: 'w2', pos: [-0.5, -0.35, 0.25] },
-    { id: 'x2', pos: [0.5, -0.35, 0.25] },
-    { id: 'core', pos: [0.1, -0.35, -0.3] },
+    { id: 's', pos: [0.3, 0, 0] },
+    { id: 'n1', pos: [0.3, 0, -0.3] },
+    { id: 'n2', pos: [0.3, 0.3, -0.3] },
+    { id: 'n3', pos: [0.3, 0.3, 0] },
+    { id: 'core', pos: [0, 0.3, -0.3] },
+    { id: 'n5', pos: [0, 0, 0] },
   ],
   edges: [
-    { a: 's', b: 'x' },
-    { a: 's', b: 'w' },
-    { a: 'x', b: 'y', hidden: 'sun' },
-    { a: 'y', b: 'core' },
-    { a: 'w', b: 'w2' },
-    { a: 'x', b: 'x2' },
-    { a: 'w2', b: 'x2' },
+    { a: 's', b: 'n1' },
+    { a: 'n1', b: 'n2', hidden: 'sun' },
+    { a: 'n2', b: 'n3' },
+    { a: 'n2', b: 'core' },
+    { a: 's', b: 'n5' },
   ],
-  cracks: [{ id: 'crown', normal: C.n, lights: 'sun', target: [0.5, 0.4, -0.02] }],
-  start: { pose: 'B', dropletNode: 's', plates: {} },
+  veins: veinsFor(1),
+  cracks: [
+    { id: 'c1', normal: CRACK1.n, lights: 'sun', target: [0.3, 0.15, -0.3] },
+  ],
+  start: { dropletNode: 's' },
   goal: { dropletNode: 'core' },
   expectedMinMoves: [3, 5],
 };

@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import type { LevelDef, PoseDef } from '../src/puzzle/types';
+import type { LevelDef, Mat3, Vec3 } from '../src/puzzle/types';
 import {
-  STAR_DIR,
+  IDENTITY,
+  TIP,
+  VIEW_DIR,
+  allOrientations,
+  apply,
   applyAction,
   computeLit,
+  downAxis,
   facingStar,
   initialState,
   isWon,
   legalActions,
   localGravity,
-  poseQuat,
+  matToQuat,
+  mulMat,
+  overlaps,
   rollPath,
+  transpose,
 } from '../src/puzzle/rules';
 import { rotate } from '../src/puzzle/math';
 import { solve, analyzeLevel } from '../src/puzzle/solver';
@@ -18,22 +26,17 @@ import { LEVELS } from '../src/levels';
 
 const close = (a: number[], b: number[]) => a.forEach((x, i) => expect(x).toBeCloseTo(b[i], 6));
 
-// A cube-like fixture: B = bottom down, E = +X down, N = -Z down, T = top down.
+// A cube fixture with a vertical groove and a side branch.
 const fixture = (over: Partial<LevelDef> = {}): LevelDef => ({
   id: 'fx',
   hullPoints: [],
-  poses: [
-    { id: 'B', downNormal: [0, -1, 0], neighbors: ['E', 'N'] },
-    { id: 'E', downNormal: [1, 0, 0], neighbors: ['B', 'N'] },
-    { id: 'N', downNormal: [0, 0, -1], neighbors: ['B', 'E'], requiresPlates: { p: true } },
-  ],
-  plates: [{ id: 'p', hingeAxis: [[0, 0, 0], [1, 0, 0]], shape: [], openAngle: 90 }],
+  stableFaces: ['px', 'nx', 'py', 'ny', 'pz', 'nz'],
   nodes: [
-    { id: 'top', pos: [0, 1, 0] },
+    { id: 'top', pos: [0, 0.3, 0] },
     { id: 'mid', pos: [0, 0, 0] },
-    { id: 'low', pos: [0, -1, 0] },
-    { id: 'east', pos: [1, -1, 0] },
-    { id: 'back', pos: [1, -1, -1] },
+    { id: 'low', pos: [0, -0.3, 0] },
+    { id: 'east', pos: [0.3, -0.3, 0] },
+    { id: 'back', pos: [0.3, -0.3, -0.3] },
   ],
   edges: [
     { a: 'top', b: 'mid' },
@@ -41,37 +44,54 @@ const fixture = (over: Partial<LevelDef> = {}): LevelDef => ({
     { a: 'low', b: 'east' },
     { a: 'east', b: 'back', hidden: 'sun' },
   ],
+  veins: [],
   cracks: [],
-  start: { pose: 'B', dropletNode: 'top', plates: { p: false } },
+  start: { dropletNode: 'top' },
   goal: { dropletNode: 'back' },
   expectedMinMoves: [1, 9],
   ...over,
 });
 
-describe('local gravity', () => {
-  it('equals the down normal for untwisted and twisted poses', () => {
-    const poses: PoseDef[] = [
-      { id: 'a', downNormal: [0, -1, 0], neighbors: [] },
-      { id: 'b', downNormal: [1, 0, 0], neighbors: [] },
-      { id: 'c', downNormal: [0.3, 0.2, -1], yaw: 73, neighbors: [] },
-      { id: 'd', downNormal: [0, 1, 0], yaw: 12, neighbors: [] },
-    ];
-    for (const p of poses) {
-      const n = Math.hypot(...p.downNormal);
-      close(localGravity(p), p.downNormal.map((x) => x / n));
-      close(rotate(poseQuat(p), p.downNormal.map((x) => x / n) as [number, number, number]), [0, -1, 0]);
+describe('orientation and gravity', () => {
+  it('tipping turns the top toward the push direction', () => {
+    close(apply(TIP.px, [0, 1, 0]), [1, 0, 0]);
+    close(apply(TIP.nx, [0, 1, 0]), [-1, 0, 0]);
+    close(apply(TIP.pz, [0, 1, 0]), [0, 0, 1]);
+    close(apply(TIP.nz, [0, 1, 0]), [0, 0, -1]);
+  });
+
+  it('a push and the opposite push cancel exactly', () => {
+    expect(mulMat(TIP.nx, TIP.px)).toEqual(IDENTITY);
+    expect(mulMat(TIP.pz, TIP.nz)).toEqual(IDENTITY);
+  });
+
+  it('reaches exactly the 24 rotations of a cube', () => {
+    expect(allOrientations()).toHaveLength(24);
+  });
+
+  it('local gravity is the face on the pedestal', () => {
+    const m = mulMat(TIP.px, IDENTITY); // tipped right: the +X face is now down
+    expect(downAxis(m)).toBe('px');
+    close(localGravity(m), [1, 0, 0]);
+    close(localGravity(IDENTITY), [0, -1, 0]);
+  });
+
+  it('matrix and quaternion agree', () => {
+    for (const m of allOrientations()) {
+      const q = matToQuat(m);
+      for (const v of [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]) close(rotate(q, v), apply(m, v));
     }
   });
 });
 
 describe('droplet rolling', () => {
-  it('rolls along successive edges until it comes to rest', () => {
+  it('rolls along successive grooves until it comes to rest', () => {
     const lvl = fixture();
-    expect(rollPath(lvl, 'B', 'top', {}, [])).toEqual(['top', 'mid', 'low']);
-    expect(rollPath(lvl, 'E', 'low', {}, [])).toEqual(['low', 'east']);
+    expect(rollPath(lvl, IDENTITY, 'top', []).map((s) => s.node)).toEqual(['top', 'mid', 'low']);
+    expect(rollPath(lvl, TIP.px, 'low', []).map((s) => s.node)).toEqual(['low', 'east']);
   });
 
-  it('ignores edges below the 0.35 alignment threshold', () => {
+  it('ignores grooves below the 0.35 alignment threshold', () => {
     const lvl = fixture({
       nodes: [
         { id: 'top', pos: [0, 0, 0] },
@@ -85,79 +105,93 @@ describe('droplet rolling', () => {
         { a: 'top', b: 'low' },
       ],
     });
-    expect(rollPath(lvl, 'B', 'top', {}, [])).toEqual(['top', 'low']);
+    expect(rollPath(lvl, IDENTITY, 'top', []).map((s) => s.node)).toEqual(['top', 'low']);
   });
 
-  it('initial state settles the droplet', () => {
+  it('settles the droplet in the initial state', () => {
     expect(initialState(fixture()).dropletNode).toBe('low');
   });
 });
 
 describe('actions', () => {
-  it('rejects toppling to a non-neighbour pose', () => {
-    const lvl = fixture({
-      poses: [
-        { id: 'B', downNormal: [0, -1, 0], neighbors: ['E'] },
-        { id: 'E', downNormal: [1, 0, 0], neighbors: ['B'] },
-        { id: 'N', downNormal: [0, 0, -1], neighbors: [] },
-      ],
-    });
+  it('refuses to tip onto a face the relic cannot rest on', () => {
+    const lvl = fixture({ stableFaces: ['ny', 'nx', 'pz', 'nz', 'py'] });
     const s = initialState(lvl);
-    const r = applyAction(lvl, s, { type: 'topple', to: 'N' });
-    expect(r.ok).toBe(false);
-  });
-
-  it('rejects toppling onto a face that needs an open plate', () => {
-    const lvl = fixture();
-    const s = initialState(lvl);
-    const r = applyAction(lvl, s, { type: 'topple', to: 'N' });
-    expect(r).toEqual({ ok: false, reason: 'unstable-pose' });
-    expect(legalActions(lvl, s)).not.toContainEqual({ type: 'topple', to: 'N' });
-  });
-
-  it('rejects a fold that would leave the current pose unstable', () => {
-    const lvl = fixture();
-    let s = initialState(lvl);
-    const open = applyAction(lvl, s, { type: 'fold', plate: 'p' });
-    expect(open.ok).toBe(true);
-    if (!open.ok) return;
-    const onN = applyAction(lvl, open.state, { type: 'topple', to: 'N' });
-    expect(onN.ok).toBe(true);
-    if (!onN.ok) return;
-    s = onN.state;
-    expect(applyAction(lvl, s, { type: 'fold', plate: 'p' })).toEqual({ ok: false, reason: 'fold-unstable' });
+    expect(applyAction(lvl, s, { type: 'topple', dir: 'px' })).toEqual({ ok: false, reason: 'unstable-face' });
+    expect(legalActions(lvl, s)).not.toContainEqual({ type: 'topple', dir: 'px' });
+    expect(legalActions(lvl, s)).toHaveLength(3);
   });
 });
 
 describe('starlight', () => {
-  it('lights a crack facing the star and reveals the hidden edge', () => {
-    const E = { downNormal: [1, 0, 0] as [number, number, number] };
-    const lvl = fixture({ cracks: [{ id: 'c', normal: facingStar(E), lights: 'sun' }] });
-    expect(computeLit(lvl, 'B', {})).toEqual([]);
-    expect(computeLit(lvl, 'E', {})).toEqual(['sun']);
-    // In E the droplet runs low → east; the revealed edge east→back goes -Z, so
-    // it rests at east. Toppling to N (plate open) then pulls it along -Z only if lit.
-    const s0 = initialState(lvl);
-    const r = applyAction(lvl, s0, { type: 'topple', to: 'E' });
+  it('lights a crack facing the star and the revealed groove carries the droplet', () => {
+    const target: Mat3 = mulMat(TIP.nz, TIP.px); // gravity now pulls toward local -Z
+    const lvl = fixture({ cracks: [{ id: 'c', normal: facingStar(target), lights: 'sun' }] });
+    expect(computeLit(lvl, IDENTITY)).toEqual([]);
+    expect(computeLit(lvl, target)).toEqual(['sun']);
+    const atEast = { orient: TIP.px, dropletNode: 'east', lit: [] };
+    const r = applyAction(lvl, atEast, { type: 'topple', dir: 'nz' });
     expect(r.ok && r.state.lit).toEqual(['sun']);
-    expect(r.ok && r.state.dropletNode).toBe('east');
+    expect(r.ok && r.state.dropletNode).toBe('back');
+    expect(r.ok && isWon(lvl, r.state)).toBe(true);
   });
 
-  it('a hidden edge stays shut while the crack is dark or blocked', () => {
-    const lit = fixture({
-      poses: [
-        { id: 'B', downNormal: [0, -1, 0], neighbors: ['E'] },
-        { id: 'E', downNormal: [1, 0, 0], neighbors: ['B', 'K'] },
-        { id: 'K', downNormal: [0.7, 0, -0.7], neighbors: ['E'] },
+  it('a hidden groove stays shut while its crack is dark', () => {
+    const lvl = fixture({ cracks: [{ id: 'c', normal: facingStar(IDENTITY), lights: 'sun' }] });
+    const atEast = { orient: TIP.px, dropletNode: 'east', lit: [] };
+    const r = applyAction(lvl, atEast, { type: 'topple', dir: 'nz' });
+    expect(r.ok && r.state.lit).toEqual([]);
+    expect(r.ok && r.state.dropletNode).toBe('east');
+  });
+});
+
+describe('veins and overlaps', () => {
+  // A vein point exactly one view-step in front of the groove end 'low'.
+  const step = 0.3;
+  const veinPt: Vec3 = [step * VIEW_DIR[0] * Math.sqrt(3), -0.3 + step * VIEW_DIR[1] * Math.sqrt(3), step * VIEW_DIR[2] * Math.sqrt(3)];
+  const withVein = (): LevelDef =>
+    fixture({
+      nodes: [
+        { id: 'top', pos: [0, 0.3, 0] },
+        { id: 'low', pos: [0, -0.3, 0] },
+        { id: 'goal', pos: [0.3, -0.6, 0.3] },
       ],
-      cracks: [{ id: 'c', normal: facingStar({ downNormal: [0.7, 0, -0.7] }), lights: 'sun', blockedByPlates: { p: true } }],
+      edges: [{ a: 'top', b: 'low' }],
+      veins: [{ id: 'v', points: [veinPt, [0.3, -0.6, 0.3]] }],
+      goal: { dropletNode: 'v.1' },
     });
-    const atEast = { pose: 'K', dropletNode: 'east', plates: { p: false }, lit: [] };
-    const open = applyAction(lit, { ...atEast, pose: 'E' }, { type: 'topple', to: 'K' });
-    expect(open.ok && open.state.dropletNode).toBe('back');
-    const blocked = applyAction(lit, { ...atEast, pose: 'E', plates: { p: true } }, { type: 'topple', to: 'K' });
-    expect(blocked.ok && blocked.state.dropletNode).toBe('east');
-    expect(STAR_DIR[1]).toBeGreaterThan(0);
+
+  it('links a groove node and a vein node that line up on screen', () => {
+    const lvl = withVein();
+    expect(overlaps(lvl, IDENTITY)).toContainEqual(['low', 'v.0']);
+    // Turn the relic and the two points no longer line up.
+    expect(overlaps(lvl, TIP.px)).not.toContainEqual(['low', 'v.0']);
+  });
+
+  it('the droplet slips through the overlap and runs along the vein', () => {
+    const lvl = withVein();
+    const path = rollPath(lvl, IDENTITY, 'top', []);
+    expect(path.map((s) => s.node)).toEqual(['top', 'low', 'v.1']);
+    expect(path[2].via).toBe('v.0');
+  });
+
+  it('two groove nodes lining up on screen never link', () => {
+    const lvl = fixture({
+      nodes: [
+        { id: 'top', pos: [0, 0, 0] },
+        { id: 'far', pos: [-0.3, -0.3, -0.3] },
+        { id: 'mid', pos: [5, 5, 5] },
+        { id: 'low', pos: [6, 6, 6] },
+        { id: 'east', pos: [7, 7, 7] },
+        { id: 'back', pos: [8, 8, 8] },
+      ],
+      edges: [],
+    });
+    expect(overlaps(lvl, IDENTITY)).toEqual([]);
+  });
+
+  it('view helpers stay orthonormal', () => {
+    for (const m of allOrientations()) expect(mulMat(m, transpose(m))).toEqual(IDENTITY);
   });
 });
 
@@ -166,9 +200,8 @@ describe('shipped levels', () => {
     const a = analyzeLevel(level);
     expect(a.minMoves).not.toBeNull();
     expect(a.deadEnds).toHaveLength(0);
-    const sol = solve(level, initialState(level)) ?? [];
     let s = initialState(level);
-    for (const act of sol) {
+    for (const act of solve(level, s) ?? []) {
       const r = applyAction(level, s, act);
       expect(r.ok).toBe(true);
       if (r.ok) s = r.state;

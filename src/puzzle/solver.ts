@@ -1,11 +1,10 @@
 // Breadth-first solver over the discrete puzzle state space (pure).
 
 import type { Action, GameState, LevelDef } from './types';
-import { applyAction, initialState, isWon, legalActions } from './rules';
+import { applyAction, initialState, isWon, legalActions, orientKey } from './rules';
 
-export function stateKey(level: LevelDef, s: GameState): string {
-  const plates = level.plates.map((p) => (s.plates[p.id] ? '1' : '0')).join('');
-  return `${s.pose}|${s.dropletNode}|${plates}`;
+export function stateKey(_level: LevelDef, s: GameState): string {
+  return `${orientKey(s.orient)}|${s.dropletNode}`;
 }
 
 /** Shortest action sequence from `from` to a won state, or null if unsolvable. */

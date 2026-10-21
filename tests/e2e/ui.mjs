@@ -43,11 +43,11 @@ await wait(400);
 check('background drag leaves puzzle state', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
 await p.screenshot({ path: `${out}/ui-orbit.png` });
 // 3. Undo/reset buttons.
-const d = await H(p, () => window.__hoshikui.toppleScreenDir('E'));
+const d = await H(p, () => window.__hoshikui.toppleScreenDir('px'));
 const c2 = await H(p, () => window.__hoshikui.relicScreen());
 await p.mouse.move(c2.x, c2.y); await p.mouse.down(); await p.mouse.move(c2.x + d.x * 160, c2.y + d.y * 160, { steps: 12 }); await p.mouse.up();
 await idle(p);
-check('drag topples to E', (await H(p, () => window.__hoshikui.state())).pose === 'E');
+check('drag tumbles the relic', (await H(p, () => window.__hoshikui.state())).orient.join() === '0,1,0,-1,0,0,0,0,1');
 await p.click('button[aria-label="undo"]');
 await idle(p);
 check('undo restores', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
@@ -71,7 +71,7 @@ await wait(400);
 check('menu closes to play', (await H(p, () => window.__hoshikui.screen())) === 'play');
 await p.context().close();
 
-// 5. Chapter select with ?all, choose level 3, fold by tapping the hinge.
+// 5. Chapter select with ?all, choose level 3 and solve it by dragging.
 p = await open('?debug&all');
 await p.click('button[aria-label="chapters"]');
 await wait(700);
@@ -81,24 +81,17 @@ await p.click('.chapter >> nth=2');
 await wait(300);
 await idle(p);
 check('chapter 3 loaded', (await H(p, () => window.__hoshikui.level())) === 2);
-const hs = await H(p, () => window.__hoshikui.hingeScreen('p'));
-await p.mouse.click(hs.x, hs.y);
-await idle(p);
-check('tap hinge opens shard', (await H(p, () => window.__hoshikui.state())).plates.p === true);
-await p.screenshot({ path: `${out}/ui-fold.png` });
-// fold back, then 3 refused topples (to S needs shard open → close first)
-await p.mouse.click(hs.x, hs.y); await idle(p);
-let handSeen = false;
-for (let i = 0; i < 3; i++) {
-  const dd = await H(p, () => window.__hoshikui.toppleScreenDir('S'));
+// Play chapter 3 with real drags along the solver's solution: it needs the vein illusion.
+const sol3 = await H(p, () => window.__hoshikui.solve());
+for (const act of sol3) {
+  const dd = await H(p, (dir) => window.__hoshikui.toppleScreenDir(dir), act.dir);
   const cc = await H(p, () => window.__hoshikui.relicScreen());
   await p.mouse.move(cc.x, cc.y); await p.mouse.down(); await p.mouse.move(cc.x + dd.x * 160, cc.y + dd.y * 160, { steps: 10 }); await p.mouse.up();
-  for (let t = 0; t < 30; t++) { if (!(await H(p, () => window.__hoshikui.busy()))) break; await wait(100); }
+  await idle(p);
+  await p.screenshot({ path: `${out}/ui-l3-step.png` });
 }
-for (let t = 0; t < 60 && !handSeen; t++) { handSeen = await p.evaluate(() => document.querySelector('.hand').classList.contains('show')); if (!handSeen) await wait(100); }
-await p.screenshot({ path: `${out}/ui-refusal-hand.png` });
-check('refused topple keeps pose', (await H(p, () => window.__hoshikui.state())).pose === 'B');
-check('3 refusals show hand', handSeen);
+await wait(300); await idle(p);
+check('chapter 3 solved by dragging (vein crossing)', (await H(p, () => window.__hoshikui.level())) === 3);
 await p.context().close();
 
 // 6. Mobile touch: tap to start and swipe topple.
@@ -108,14 +101,14 @@ await p.touchscreen.tap(m0.x, m0.y);
 await wait(200); await idle(p);
 check('touch tap starts', (await H(p, () => window.__hoshikui.screen())) === 'play');
 const cdp = await p.context().newCDPSession(p);
-const md = await H(p, () => window.__hoshikui.toppleScreenDir('N'));
+const md = await H(p, () => window.__hoshikui.toppleScreenDir('nz'));
 const mc = await H(p, () => window.__hoshikui.relicScreen());
 const pts = Array.from({ length: 10 }, (_, i) => ({ x: mc.x + md.x * 12 * i, y: mc.y + md.y * 12 * i }));
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pts[0]] });
 for (const pt of pts.slice(1)) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt] }); await wait(16); }
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await idle(p);
-check('touch swipe topples', (await H(p, () => window.__hoshikui.state())).pose === 'N');
+check('touch swipe tumbles', (await H(p, () => window.__hoshikui.state())).orient.join() === '1,0,0,0,0,1,0,-1,0');
 await p.screenshot({ path: `${out}/ui-mobile-after.png` });
 
 console.log(results.join('\n'));

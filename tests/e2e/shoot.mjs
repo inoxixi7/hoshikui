@@ -32,17 +32,14 @@ if (scenario === 'basic' || scenario === 'play') {
   const sol = await desktop.evaluate(() => window.__hoshikui.solve());
   console.log('solution', JSON.stringify(sol));
   for (const [i, a] of sol.entries()) {
-    if (a.type === 'topple') {
+    {
       const c = await desktop.evaluate(() => window.__hoshikui.relicScreen());
-      const d = await desktop.evaluate((to) => window.__hoshikui.toppleScreenDir(to), a.to);
+      const d = await desktop.evaluate((dir) => window.__hoshikui.toppleScreenDir(dir), a.dir);
       await desktop.mouse.move(c.x, c.y);
       await desktop.mouse.down();
       for (let k = 1; k <= 12; k++) await desktop.mouse.move(c.x + d.x * 12 * k, c.y + d.y * 12 * k);
       if (i === 0) await desktop.screenshot({ path: `${out}/desktop-tilt.png` });
       await desktop.mouse.up();
-    } else {
-      const h = await desktop.evaluate((id) => window.__hoshikui.hingeScreen(id), a.plate);
-      await desktop.mouse.click(h.x, h.y);
     }
     await wait(250);
     if (i === 0) await desktop.screenshot({ path: `${out}/desktop-move1.png` });

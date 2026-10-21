@@ -1,60 +1,54 @@
-// Level 5 — 吞星. Everything at once: open the crown to the star, shut it again so
-// the propped front face will hold, then lay the relic on its side and open the
-// last shard so starlight reaches the heart just as the droplet does.
+// Level 5 — 吞星. Light the inner channel, cross on a vein, and enter the core
+// only while the star shines on it.
 import type { LevelDef } from '../puzzle/types';
-import { flap, plane, vertsFromPlanes } from '../puzzle/geometry';
+import { plane, vertsFromPlanes } from '../puzzle/geometry';
 import { facingStar } from '../puzzle/rules';
+import { BASE_PLANES, veinsFor } from './relic';
 
-const B = plane([0, -1, 0], 0.5);
-const E = plane([1, 0, 0.03], 0.72);
-const W = plane([-1, 0, 0], 0.72);
-const N = plane([0, 0, -1], 0.58);
-const S = plane([0, 0, 1], 0.5);
-const SLOPE = plane([0, 0.8, 0.6], 0.56);
-const CROWN = plane(facingStar({ downNormal: N.n }), 0.66);
-const BACK = plane(facingStar({ downNormal: W.n }), 0.62);
-
-const planes = [
-  B, E, W, N, S, SLOPE, CROWN, BACK,
-  plane([0.62, 0.5, -0.6], 0.9),
-  plane([0.55, -0.55, 0.6], 0.82),
-  plane([-0.6, -0.55, 0.55], 0.84),
-  plane([0.7, 0.4, 0.55], 0.95),
-];
-
-const prop = flap(planes, 5, 4, 0.5, 0.12, 'a');
-const crownLid = flap(planes, 6, 2, 0.4, 0.14, 'p');
-const heartLid = flap(planes, 7, 3, 0.4, 0.16, 'q');
+// Faces the star once the relic is turned to [0, 0, 1, -1, 0, 0, 0, -1, 0].
+const CRACK1 = plane(facingStar([0, 0, 1, -1, 0, 0, 0, -1, 0]), 0.8249);
+// Faces the star once the relic is turned to [-1, 0, 0, 0, -1, 0, 0, 0, 1].
+const CRACK2 = plane(facingStar([-1, 0, 0, 0, -1, 0, 0, 0, 1]), 0.7775);
+const planes = [...BASE_PLANES, CRACK1, CRACK2];
 
 export const level5: LevelDef = {
   id: 'l5',
   hullPoints: vertsFromPlanes(planes),
-  poses: [
-    { id: 'B', downNormal: B.n, neighbors: ['E', 'W', 'N', 'S'] },
-    { id: 'E', downNormal: E.n, neighbors: ['B', 'N', 'S'] },
-    { id: 'W', downNormal: W.n, neighbors: ['B', 'N', 'S'] },
-    { id: 'N', downNormal: N.n, neighbors: ['B', 'E', 'W'] },
-    { id: 'S', downNormal: S.n, neighbors: ['B', 'E', 'W'], requiresPlates: { a: true, p: false } },
-  ],
-  plates: [prop, crownLid, heartLid],
+  stableFaces: ['px', 'nx', 'py', 'ny', 'pz', 'nz'],
   nodes: [
-    { id: 's', pos: [0.5, 0.1, 0.25] },
-    { id: 'w', pos: [-0.05, 0.1, 0.25] },
-    { id: 'a', pos: [0.5, 0.1, -0.35] },
-    { id: 'b', pos: [0.5, 0.35, 0.2] },
-    { id: 'core', pos: [-0.35, 0.35, 0.2] },
+    { id: 's', pos: [0, 0.3, 0] },
+    { id: 'n1', pos: [0, 0.3, 0.3] },
+    { id: 'n2', pos: [0.3, 0.3, 0.3] },
+    { id: 'core', pos: [0.3, 0.3, 0] },
+    { id: 'n4', pos: [-0.3, 0.3, 0.3] },
+    { id: 'n5', pos: [0.3, 0, 0] },
+    { id: 'n6', pos: [0, 0, 0.3] },
+    { id: 'n7', pos: [0.3, 0, 0.3] },
+    { id: 'n8', pos: [0.3, 0, -0.3] },
+    { id: 'n9', pos: [-0.3, 0.3, 0] },
+    { id: 'n10', pos: [0.3, -0.3, 0] },
   ],
   edges: [
-    { a: 's', b: 'w' },
-    { a: 's', b: 'a', hidden: 'sunA' },
-    { a: 'a', b: 'b' },
-    { a: 'b', b: 'core', hidden: 'heart' },
+    { a: 's', b: 'n1', hidden: 'sun' },
+    { a: 'n1', b: 'n2' },
+    { a: 's', b: 'core', hidden: 'heart' },
+    { a: 'n1', b: 'n4' },
+    { a: 'core', b: 'n5', hidden: 'heart' },
+    { a: 'n1', b: 'n6' },
+    { a: 'n2', b: 'n7' },
+    { a: 'n5', b: 'n8' },
+    { a: 's', b: 'n9' },
+    { a: 'n5', b: 'n10' },
+    { a: 'n2', b: 'core', hidden: 'heart' },
+    { a: 'n4', b: 'n9' },
+    { a: 'n6', b: 'n7' },
   ],
+  veins: veinsFor(4),
   cracks: [
-    { id: 'crown', normal: CROWN.n, lights: 'sunA', blockedByPlates: { p: false }, target: [0.5, 0.1, -0.05] },
-    { id: 'heart', normal: BACK.n, lights: 'heart', blockedByPlates: { q: false }, target: [-0.35, 0.35, 0.2] },
+    { id: 'c1', normal: CRACK1.n, lights: 'sun', target: [0, 0.3, 0.15] },
+    { id: 'heart', normal: CRACK2.n, lights: 'heart', target: [0.3, 0.3, 0] },
   ],
-  start: { pose: 'B', dropletNode: 's', plates: { a: false, p: false, q: false } },
+  start: { dropletNode: 's' },
   goal: { dropletNode: 'core', litTargets: ['heart'] },
   expectedMinMoves: [6, 9],
 };
