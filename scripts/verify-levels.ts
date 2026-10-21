@@ -47,6 +47,9 @@ function geometryIssues(level: LevelDef): string[] {
       if (!facesAdjacent(pts, p.downNormal, getPose(level, n).downNormal)) issues.push(`pose ${p.id}/${n}: faces not adjacent`);
     }
   }
+  for (const c of level.cracks) {
+    if (!isFaceNormal(pts, c.normal)) issues.push(`crack ${c.id}: normal is not a hull face`);
+  }
   // An open plate must never reach below the face the relic stands on.
   const combos = 1 << level.plates.length;
   for (const pose of level.poses) {

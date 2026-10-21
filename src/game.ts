@@ -662,6 +662,7 @@ export class Game {
       act: (a: Action) => this.perform(a),
       solve: () => solve(this.level, this.state),
       start: () => this.startFromTitle(),
+      hint: () => this.showIdleHint(),
       load: (i: number) => this.loadLevel(i, 'play'),
       relicScreen: () => this.relicCenterScreen(),
       toppleScreenDir: (to: string) => {

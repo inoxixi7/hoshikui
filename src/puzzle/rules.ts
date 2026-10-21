@@ -15,7 +15,7 @@ import {
 } from './math';
 
 /** World direction towards the distant star (the only light source). */
-export const STAR_DIR: Vec3 = normalize([-0.372, 0.122, -0.92]);
+export const STAR_DIR: Vec3 = normalize([-0.3746, 0.0262, -0.9268]);
 export const LIGHT_COS = Math.cos((25 * Math.PI) / 180);
 export const ROLL_THRESHOLD = 0.35;
 export const MAX_ROLL_STEPS = 64;

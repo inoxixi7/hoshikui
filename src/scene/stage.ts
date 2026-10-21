@@ -45,9 +45,9 @@ export class Stage {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+    this.camera = new THREE.PerspectiveCamera(44, 1, 0.1, 200);
     // Looking roughly toward the star, so it hangs just above the relic.
-    this.camera.position.set(0.366, 0.208, 0.907).multiplyScalar(7).add(RELIC_TARGET);
+    this.camera.position.set(0.352, 0.342, 0.871).multiplyScalar(7).add(RELIC_TARGET);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.copy(RELIC_TARGET);
@@ -87,7 +87,7 @@ export class Stage {
     fill.position.set(2, -1.5, 4);
     const rim = new THREE.DirectionalLight(0x9aa6ff, 0.9);
     rim.position.set(3, 2, -4);
-    const front = new THREE.DirectionalLight(0xb8bcff, 0.9);
+    const front = new THREE.DirectionalLight(0xb8bcff, IS_MOBILE ? 1.5 : 1.0);
     front.position.set(3, 4, 6);
     const amb = new THREE.HemisphereLight(0x4a4f9a, 0x0a0812, 1.0);
     this.scene.add(key, fill, rim, front, amb);
@@ -298,9 +298,11 @@ export class Stage {
     this.renderer.setSize(w, h, false);
     this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
+    // Shift the frame up so the relic sits low and the star hangs above it.
+    this.camera.setViewOffset(w, h, 0, -h * 0.07, w, h);
     // Keep the relic and pedestal framed on both landscape and portrait screens.
     const halfV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const needH = 3.6 / (2 * halfV);
+    const needH = 3.9 / (2 * halfV);
     const needW = 3.3 / (2 * halfV * this.camera.aspect);
     const prev = this.baseDistance;
     this.baseDistance = Math.max(needH, needW);

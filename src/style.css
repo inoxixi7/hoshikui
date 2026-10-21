@@ -144,7 +144,7 @@ html, body {
 .overlay.show { opacity: 1; visibility: visible; transition: opacity 0.35s ease, visibility 0s; }
 .overlay .close { position: absolute; top: calc(14px + var(--safe-t)); left: calc(14px + var(--safe-l)); }
 
-.menu-row { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; max-width: 340px; padding: 0 16px; }
+.menu-row { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; max-width: 420px; padding: 0 16px; }
 
 .hold .ring { position: absolute; inset: -3px; width: calc(100% + 6px); height: calc(100% + 6px); transform: rotate(-90deg); pointer-events: none; }
 .hold .ring circle { fill: none; stroke: var(--star); stroke-width: 2.2; stroke-linecap: round; }
@@ -154,9 +154,9 @@ html, body {
 .chapter {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: 58px;
-  height: 58px;
-  padding: 16px;
+  width: 64px;
+  height: 64px;
+  padding: 12px;
   border-radius: 50%;
   border: 1px solid transparent;
   background: transparent;
@@ -168,7 +168,7 @@ html, body {
   animation: rise 0.5s ease forwards;
 }
 .chapter svg { width: 100%; height: 100%; }
-.chapter:disabled { padding: 24px; opacity: 0.3; }
+.chapter:disabled { padding: 18px; opacity: 0.3; }
 .chapter.open { color: var(--ink); cursor: pointer; border-color: var(--ring); background: var(--glass); }
 .chapter.open:hover { border-color: rgba(255, 217, 154, 0.5); }
 .chapter.done { color: var(--star); filter: drop-shadow(0 0 10px rgba(255, 217, 154, 0.55)); }
@@ -183,11 +183,11 @@ html, body {
   position: absolute;
   left: 0;
   top: 0;
-  width: 60px;
-  height: 60px;
+  width: 78px;
+  height: 78px;
   opacity: 0;
   pointer-events: none !important;
-  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(220, 216, 247, 0.35));
   z-index: 5;
 }
 .hand svg { width: 100%; height: 100%; }
@@ -218,7 +218,7 @@ html, body {
 @media (max-width: 480px) {
   .icon-btn { width: 44px; height: 44px; padding: 11px; }
   .bar { gap: 8px; }
-  .progress { top: calc(78px + var(--safe-t)); }
+  .progress { top: calc(80px + var(--safe-t)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

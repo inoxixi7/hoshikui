@@ -357,11 +357,11 @@ export class RelicView {
     // Keep the crack well inside its face.
     const d = supportDistance(pts, normal);
     center.copy(center.clone().projectOnPlane(n).add(n.clone().multiplyScalar(d)));
-    const line = crackPolyline(center, n, 0.34, 0.7 + i * 1.9);
+    const line = crackPolyline(center, n, 0.5, 0.7 + i * 1.9);
     const rimMat = new THREE.MeshBasicMaterial({ color: PALETTE.vein, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
     const coreMat = new THREE.MeshBasicMaterial({ color: 0x07060c, side: THREE.DoubleSide, transparent: true, depthWrite: false });
-    const rim = new THREE.Mesh(ribbonGeometry(line.map((p) => p.clone().addScaledVector(n, 0.006)), 0.085, n), rimMat);
-    const core = new THREE.Mesh(ribbonGeometry(line.map((p) => p.clone().addScaledVector(n, 0.011)), 0.04, n), coreMat);
+    const rim = new THREE.Mesh(ribbonGeometry(line.map((p) => p.clone().addScaledVector(n, 0.006)), 0.11, n), rimMat);
+    const core = new THREE.Mesh(ribbonGeometry(line.map((p) => p.clone().addScaledVector(n, 0.011)), 0.05, n), coreMat);
     rim.renderOrder = 2;
     core.renderOrder = 3;
     this.root.add(rim, core);

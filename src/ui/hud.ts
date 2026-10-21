@@ -201,9 +201,7 @@ export class Hud {
       b.classList.toggle('done', completed[i]);
       b.classList.toggle('current', i === current);
       b.style.animationDelay = `${i * 70}ms`;
-      b.innerHTML = completed[i]
-        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14 10l7.5 2-7.5 2-2 7.5-2-7.5-7.5-2 7.5-2z" fill="currentColor"/></svg>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>';
+      b.innerHTML = chapterGlyph(i, completed[i]);
       if (open) b.addEventListener('click', (e) => (e.stopPropagation(), this.h.chooseLevel(i)));
     }
   }
@@ -214,7 +212,7 @@ export class Hud {
     const ripple = this.handRipple;
     hand.getAnimations().forEach((x) => x.cancel());
     hand.classList.add('show');
-    const pos = (p: { x: number; y: number }, s = 1) => `translate(${p.x - 14}px, ${p.y - 6}px) scale(${s})`;
+    const pos = (p: { x: number; y: number }, s = 1) => `translate(${p.x - 18}px, ${p.y - 8}px) scale(${s})`;
     const frames: Keyframe[] = b
       ? [
           { transform: pos(a, 1.1), opacity: 0, offset: 0 },
@@ -260,4 +258,20 @@ export class Hud {
   get rootEl(): HTMLElement {
     return this.root;
   }
+}
+
+/** A tiny constellation with i+1 stars: order without numerals. Completed ones glow as four-point stars. */
+function chapterGlyph(i: number, done: boolean): string {
+  const n = i + 1;
+  const pts: [number, number][] = [];
+  for (let k = 0; k < n; k++) {
+    const a = n === 1 ? 0 : -Math.PI / 2 + (k / n) * Math.PI * 2;
+    const r = n === 1 ? 0 : n === 2 ? 5 : 6.5;
+    pts.push([20 + Math.cos(a) * r, 20 + Math.sin(a) * r]);
+  }
+  const lines = n > 1 ? `<polyline points="${[...pts, pts[0]].map((p) => p.join(',')).join(' ')}" fill="none" stroke="currentColor" stroke-width="0.9" opacity="0.45"/>` : '';
+  const star = (x: number, y: number, s: number) =>
+    `<path d="M${x} ${y - s}L${x + s * 0.28} ${y - s * 0.28}L${x + s} ${y}L${x + s * 0.28} ${y + s * 0.28}L${x} ${y + s}L${x - s * 0.28} ${y + s * 0.28}L${x - s} ${y}L${x - s * 0.28} ${y - s * 0.28}Z" fill="currentColor"/>`;
+  const dots = pts.map(([x, y]) => (done ? star(x, y, 3.6) : `<circle cx="${x}" cy="${y}" r="2.1" fill="currentColor"/>`)).join('');
+  return `<svg viewBox="0 0 40 40" aria-hidden="true">${lines}${dots}</svg>`;
 }
