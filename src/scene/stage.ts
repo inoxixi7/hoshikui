@@ -69,6 +69,9 @@ export class Stage {
     this.controls.rotateSpeed = 0.55;
     this.controls.minPolarAngle = 0.12 * Math.PI;
     this.controls.maxPolarAngle = 0.48 * Math.PI;
+    // The view never moves: turning happens to the relic and pedestal instead.
+    this.controls.enableRotate = false;
+    this.controls.enableZoom = false;
     this.controls.minZoom = 0.8;
     this.controls.maxZoom = 1.6;
     this.controls.zoomSpeed = 0.6;

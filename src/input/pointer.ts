@@ -76,7 +76,7 @@ export class PointerInput {
     const hit = can ? this.pick(e.clientX, e.clientY) : null;
     const plate = hit ? findPlate(hit.object) : null;
     const onRelic = Boolean(hit);
-    const onTable = !onRelic && can && Boolean(this.pick(e.clientX, e.clientY, 'table'));
+    const onTable = !onRelic && can;
     this.active = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), onRelic, onTable, plate, dragging: false };
     if (onRelic) {
       this.controls.enabled = false;

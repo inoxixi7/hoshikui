@@ -48,7 +48,7 @@ export class Game {
   private demoShown = false;
   private demoTimer = -1;
   private drag: { candidates: DragCandidate[]; choice: DragCandidate | null; dist: number } | null = null;
-  private turnDrag: { cx: number; cy: number; last: number; angle: number } | null = null;
+  private turnDrag: { x0: number; angle: number } | null = null;
   private spinSpeed = 0;
   private overlayReturn: 'title' | 'play' = 'play';
   private flashEl: HTMLElement;
@@ -317,7 +317,7 @@ export class Game {
     if (action.type === 'topple') await this.relic.topple(action.dir, () => sfx.land());
     else {
       sfx.fold();
-      await this.relic.turn(action.turn);
+      await this.relic.turnBy(action.turn);
     }
     await this.relic.updateLight(r.state, () => sfx.light());
     if (r.path.length > 1) await this.relic.roll(r.path, (i) => sfx.roll(i));
@@ -355,7 +355,7 @@ export class Game {
     if (back.type === 'topple') jobs.push(this.relic.topple(back.dir, () => sfx.land()));
     else {
       sfx.fold();
-      jobs.push(this.relic.turn(back.turn));
+      jobs.push(this.relic.turnBy(back.turn));
     }
     await Promise.all(jobs);
     await this.relic.updateLight(prev);
@@ -471,10 +471,10 @@ export class Game {
     const a = this.relicCenterScreen();
     const center = this.relic.root.getWorldPosition(new THREE.Vector3());
     if (next.type === 'spin') {
-      // Drag along the front of the turntable: right turns it one way, left the other.
-      const front = this.toScreen(this.floatToWorld(new THREE.Vector3(0.85, 0, 0.85)));
-      const side = this.toScreen(this.floatToWorld(new THREE.Vector3(0.85, 0, -0.85))).sub(front).normalize();
-      const b = front.clone().addScaledVector(side, (next.turn === 1 ? 1 : -1) * 120);
+      // A sideways swipe beside the relic turns it.
+      const front = this.toScreen(this.floatToWorld(new THREE.Vector3(1.1, 0, 1.1)));
+      front.x = a.x - (next.turn === 1 ? 1 : -1) * this.quarterPx * 0.5;
+      const b = front.clone().add(new THREE.Vector2((next.turn === 1 ? 1 : -1) * this.quarterPx, 0));
       this.stage.setRingHint(true);
       this.hinting = true;
       await this.hud.showHand(front, b);
@@ -571,27 +571,29 @@ export class Game {
     }
   }
 
-  /** Turning on the pedestal: the pointer's angle around the relic is the turn. */
-  private turnStart(x: number, y: number) {
+  /**
+   * Dragging anywhere off the relic turns relic and pedestal together, following the
+   * finger one-to-one; on release it eases into the nearest quarter turn.
+   */
+  private turnStart(x: number, _y: number) {
     if (this.hud.current !== 'play' || this.inputLocked) {
       this.turnDrag = null;
       return;
     }
     this.hud.hideHand();
-    const c = this.relicCenterScreen();
-    this.turnDrag = { cx: c.x, cy: c.y, last: Math.atan2(y - c.y, x - c.x), angle: 0 };
+    this.turnDrag = { x0: x, angle: 0 };
   }
 
-  private turnMove(x: number, y: number) {
+  /** Pixels of horizontal drag per quarter turn. */
+  private get quarterPx(): number {
+    return Math.max(110, Math.min(window.innerWidth, window.innerHeight) * 0.32);
+  }
+
+  private turnMove(x: number, _y: number) {
     const t = this.turnDrag;
     if (!t) return;
-    const a = Math.atan2(y - t.cy, x - t.cx);
-    let d = a - t.last;
-    if (d > Math.PI) d -= Math.PI * 2;
-    if (d < -Math.PI) d += Math.PI * 2;
-    t.last = a;
-    // Screen y points down, so a clockwise drag on screen is a counter-clockwise turn from above.
-    t.angle = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, t.angle - d));
+    // Dragging right carries the near side of the relic to the right.
+    t.angle = ((x - t.x0) / this.quarterPx) * (Math.PI / 2);
     this.relic.setTurnPreview(t.angle);
   }
 
@@ -599,8 +601,40 @@ export class Game {
     const t = this.turnDrag;
     this.turnDrag = null;
     if (!t) return;
-    if (!cancelled && Math.abs(t.angle) > 0.35) void this.perform({ type: 'spin', turn: (t.angle > 0 ? 1 : -1) as Turn });
-    else if (t.angle !== 0) void this.relic.cancelTurn();
+    const quarters = cancelled ? 0 : Math.round(t.angle / (Math.PI / 2));
+    if (quarters === 0) {
+      if (t.angle !== 0) void this.relic.cancelTurn();
+      return;
+    }
+    void this.performTurns(quarters);
+  }
+
+  /** Apply several quarter turns as separate undoable steps, animated as one motion. */
+  private async performTurns(quarters: number) {
+    const turn: Turn = quarters > 0 ? 1 : -1;
+    let st = this.state;
+    const path: RollStep[] = [{ node: st.dropletNode }];
+    const entries: HistoryEntry[] = [];
+    for (let i = 0; i < Math.abs(quarters); i++) {
+      const action: Action = { type: 'spin', turn };
+      const r = applyAction(this.level, st, action);
+      if (!r.ok) break;
+      entries.push({ prev: st, action, path: r.path });
+      path.push(...r.path.slice(1));
+      st = r.state;
+    }
+    this.busy = true;
+    this.refusals = 0;
+    this.history.push(...entries);
+    this.hud.setUndoEnabled(true);
+    sfx.fold();
+    await this.relic.turnBy(quarters);
+    await this.relic.updateLight(st, () => sfx.light());
+    if (path.length > 1) await this.relic.roll(path, (i) => sfx.roll(i));
+    this.state = st;
+    this.relic.setState(st);
+    if (isWon(this.level, st)) await this.win();
+    this.busy = false;
   }
 
   private tap(hitRelic: boolean) {
@@ -681,6 +715,7 @@ export class Game {
       load: (i: number) => this.loadLevel(i, 'play'),
       relicScreen: () => this.relicCenterScreen(),
       pedestalScreen: (x: number, z: number) => this.toScreen(this.floatToWorld(new THREE.Vector3(x, 0, z))),
+      quarterPx: () => this.quarterPx,
       toppleScreenDir: (dir: Dir) => {
         const c = this.relicCenterScreen();
         const center = this.relic.root.getWorldPosition(new THREE.Vector3());

@@ -556,13 +556,18 @@ export class RelicView {
     this.spin = 0;
   }
 
-  /** Finish a quarter turn on the pedestal from wherever the preview left it. */
-  async turn(turn: Turn, onSettle?: () => void) {
+  /**
+   * Settle `quarters` quarter turns (signed) from wherever the player's drag left the
+   * relic. The drag already did the turning; this only eases into the nearest notch.
+   */
+  async turnBy(quarters: number, onSettle?: () => void) {
     const a0 = this.spin;
-    const a1 = (turn * Math.PI) / 2;
-    await this.anim.tween(0.42 * Math.max(0.35, Math.abs(a1 - a0) / (Math.PI / 2)), (k) => (this.spin = a0 + (a1 - a0) * k), ease.outBack);
+    const a1 = (quarters * Math.PI) / 2;
+    await this.anim.tween(Math.max(0.16, Math.min(0.45, Math.abs(a1 - a0) * 0.5)), (k) => (this.spin = a0 + (a1 - a0) * k), ease.outCubic);
     onSettle?.();
-    const orient = mulMat(SPIN[turn], this.state.orient);
+    let orient = this.state.orient;
+    const turn: Turn = quarters > 0 ? 1 : -1;
+    for (let i = 0; i < Math.abs(quarters); i++) orient = mulMat(SPIN[turn], orient);
     this.baseQ.copy(quatOf(orient));
     this.spin = 0;
     this.state = { ...this.state, orient };

@@ -37,11 +37,13 @@ const c = await H(p, () => window.__hoshikui.relicScreen());
 await p.mouse.move(c.x, c.y); await p.mouse.down(); await p.mouse.move(c.x + 20, c.y, { steps: 4 }); await p.mouse.up();
 await wait(500);
 check('short drag springs back', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
-// Background drag rotates camera but not the puzzle.
-await p.mouse.move(80, 400); await p.mouse.down(); await p.mouse.move(400, 380, { steps: 10 }); await p.mouse.up();
-await wait(400);
-check('background drag leaves puzzle state', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
-await p.screenshot({ path: `${out}/ui-orbit.png` });
+// A small sideways drag off the relic turns it a little, then it eases back.
+{
+  const q = await H(p, () => window.__hoshikui.quarterPx());
+  await p.mouse.move(120, 600); await p.mouse.down(); await p.mouse.move(120 + q * 0.35, 600, { steps: 8 }); await p.mouse.up();
+  await idle(p);
+  check('small sideways drag snaps back', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
+}
 // 3. Undo/reset buttons.
 const d = await H(p, () => window.__hoshikui.toppleScreenDir('px'));
 const c2 = await H(p, () => window.__hoshikui.relicScreen());
@@ -51,23 +53,28 @@ check('drag tumbles the relic', (await H(p, () => window.__hoshikui.state())).or
 await p.click('button[aria-label="undo"]');
 await idle(p);
 check('undo restores', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
-// 3b. Drag on the pedestal: the relic turns a quarter turn in place.
+// 3b. Sideways drag anywhere off the relic: it follows the finger and settles on the nearest quarter.
 {
   const before = (await H(p, () => window.__hoshikui.state())).orient.join();
-  const f = await H(p, () => window.__hoshikui.pedestalScreen(0.85, 0.85));
-  const side = await H(p, () => window.__hoshikui.pedestalScreen(0.85, -0.85));
-  const vx = side.x - f.x, vy = side.y - f.y, len = Math.hypot(vx, vy);
-  await p.mouse.move(f.x, f.y); await p.mouse.down();
-  for (let k = 1; k <= 6; k++) await p.mouse.move(f.x + (vx / len) * 25 * k, f.y + (vy / len) * 25 * k);
+  const q = await H(p, () => window.__hoshikui.quarterPx());
+  await p.mouse.move(150, 650); await p.mouse.down();
+  for (let k = 1; k <= 6; k++) await p.mouse.move(150 + (q * 0.55 * k) / 6, 650 + k);
   await p.screenshot({ path: `${out}/ui-turn-mid.png` });
-  for (let k = 7; k <= 10; k++) await p.mouse.move(f.x + (vx / len) * 25 * k, f.y + (vy / len) * 25 * k);
+  for (let k = 7; k <= 10; k++) await p.mouse.move(150 + (q * 0.95 * k) / 10, 650 + k);
   await p.mouse.up();
   await idle(p);
   const after = await H(p, () => window.__hoshikui.state());
-  check('pedestal drag turns the relic', after.orient.join() === '0,0,1,0,1,0,-1,0,0', `${before} -> ${after.orient.join()}`);
+  check('sideways drag turns a quarter', after.orient.join() === '0,0,1,0,1,0,-1,0,0', `${before} -> ${after.orient.join()}`);
   await p.click('button[aria-label="undo"]');
   await idle(p);
   check('undo turns it back', (await H(p, () => window.__hoshikui.state())).orient.join() === before);
+  // A long drag turns twice in one motion; two undos bring it back.
+  await p.mouse.move(100, 650); await p.mouse.down(); await p.mouse.move(100 + q * 2.1, 650, { steps: 20 }); await p.mouse.up();
+  await idle(p);
+  check('long drag turns a half turn', (await H(p, () => window.__hoshikui.state())).orient.join() === '-1,0,0,0,1,0,0,0,-1');
+  await p.click('button[aria-label="undo"]'); await idle(p);
+  await p.click('button[aria-label="undo"]'); await idle(p);
+  check('two undos restore', (await H(p, () => window.__hoshikui.state())).orient.join() === before);
 }
 // 4. Menu overlay + sound toggle + long-press clear.
 await p.click('button[aria-label="menu"]');
