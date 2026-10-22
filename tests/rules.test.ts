@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { LevelDef, Mat3, Vec3 } from '../src/puzzle/types';
 import {
   IDENTITY,
+  SPIN,
   TIP,
+  actionMat,
+  inverseAction,
   VIEW_DIR,
   allOrientations,
   apply,
@@ -119,7 +122,29 @@ describe('actions', () => {
     const s = initialState(lvl);
     expect(applyAction(lvl, s, { type: 'topple', dir: 'px' })).toEqual({ ok: false, reason: 'unstable-face' });
     expect(legalActions(lvl, s)).not.toContainEqual({ type: 'topple', dir: 'px' });
-    expect(legalActions(lvl, s)).toHaveLength(3);
+    expect(legalActions(lvl, s).filter((a) => a.type === 'topple')).toHaveLength(3);
+  });
+
+  it('turning on the pedestal keeps the same face down and is always allowed', () => {
+    const lvl = fixture();
+    const s = initialState(lvl);
+    for (const turn of [1, -1] as const) {
+      const r = applyAction(lvl, s, { type: 'spin', turn });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(downAxis(r.state.orient)).toBe('ny');
+        expect(r.path).toHaveLength(1); // gravity unchanged: the droplet stays put
+      }
+      expect(legalActions(lvl, s)).toContainEqual({ type: 'spin', turn });
+    }
+    // A quarter turn counter-clockwise from above carries local +X to world -Z.
+    close(apply(SPIN[1], [1, 0, 0]), [0, 0, -1]);
+    expect(mulMat(SPIN[1], SPIN[-1])).toEqual(IDENTITY);
+  });
+
+  it('every action has an exact inverse', () => {
+    for (const a of legalActions(fixture(), initialState(fixture())))
+      expect(mulMat(actionMat(inverseAction(a)), actionMat(a))).toEqual(IDENTITY);
   });
 });
 

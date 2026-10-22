@@ -2,8 +2,8 @@
 
 import * as THREE from 'three';
 import { LEVELS } from './levels';
-import type { Action, Dir, GameState, LevelDef } from './puzzle/types';
-import { DIRS, TIP, applyAction, initialState, isStable, isWon, mulMat, type RollStep } from './puzzle/rules';
+import type { Action, Dir, GameState, LevelDef, Turn } from './puzzle/types';
+import { DIRS, TIP, applyAction, initialState, inverseAction, isStable, isWon, mulMat, type RollStep } from './puzzle/rules';
 import { solve } from './puzzle/solver';
 import { Stage } from './scene/stage';
 import { DIR_VEC, RelicView, type TopplePlan } from './relic/relicView';
@@ -23,8 +23,6 @@ interface HistoryEntry {
   action: Action;
   path: RollStep[];
 }
-
-const OPPOSITE: Record<Dir, Dir> = { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' };
 
 interface DragCandidate {
   dir: Dir;
@@ -50,6 +48,7 @@ export class Game {
   private demoShown = false;
   private demoTimer = -1;
   private drag: { candidates: DragCandidate[]; choice: DragCandidate | null; dist: number } | null = null;
+  private turnDrag: { cx: number; cy: number; last: number; angle: number } | null = null;
   private spinSpeed = 0;
   private overlayReturn: 'title' | 'play' = 'play';
   private flashEl: HTMLElement;
@@ -85,12 +84,15 @@ export class Game {
     this.relic = new RelicView(this.level, this.stage.floating, this.state);
     this.enterTitle(true);
 
-    new PointerInput(canvas, this.stage.camera, this.stage.controls, () => this.relic, {
+    new PointerInput(canvas, this.stage.camera, this.stage.controls, () => ({ pickables: () => this.relic.pickables(), turntable: () => this.stage.turnPickables }), {
       canInteract: () => this.hud.current === 'play' || this.hud.current === 'title',
       activity: () => this.onActivity(),
       dragStart: () => this.dragStart(),
       dragMove: (dx, dy) => this.dragMove(dx, dy),
       dragEnd: (dx, dy, c) => this.dragEnd(dx, dy, c),
+      turnStart: (x, y) => this.turnStart(x, y),
+      turnMove: (x, y) => this.turnMove(x, y),
+      turnEnd: (c) => this.turnEnd(c),
       tap: (_plate, hitRelic) => this.tap(hitRelic),
     });
     window.addEventListener('keydown', (e) => this.key(e));
@@ -149,6 +151,7 @@ export class Game {
     if (this.hinting) {
       this.hinting = false;
       this.relic.setHint(null);
+      this.stage.setRingHint(false);
     }
     if (this.demoTimer >= 0) this.demoTimer = -1;
   }
@@ -311,7 +314,11 @@ export class Game {
     this.refusals = 0;
     this.history.push({ prev, action, path: r.path });
     this.hud.setUndoEnabled(true);
-    await this.relic.topple(action.dir, () => sfx.land());
+    if (action.type === 'topple') await this.relic.topple(action.dir, () => sfx.land());
+    else {
+      sfx.fold();
+      await this.relic.turn(action.turn);
+    }
     await this.relic.updateLight(r.state, () => sfx.light());
     if (r.path.length > 1) await this.relic.roll(r.path, (i) => sfx.roll(i));
     this.state = r.state;
@@ -344,7 +351,12 @@ export class Game {
     sfx.tap();
     const prev = h.prev;
     const jobs: Promise<void>[] = [this.relic.rewindDroplet(h.path)];
-    jobs.push(this.relic.topple(OPPOSITE[h.action.dir], () => sfx.land()));
+    const back = inverseAction(h.action);
+    if (back.type === 'topple') jobs.push(this.relic.topple(back.dir, () => sfx.land()));
+    else {
+      sfx.fold();
+      jobs.push(this.relic.turn(back.turn));
+    }
     await Promise.all(jobs);
     await this.relic.updateLight(prev);
     this.state = prev;
@@ -458,6 +470,16 @@ export class Game {
     this.demoShown = true;
     const a = this.relicCenterScreen();
     const center = this.relic.root.getWorldPosition(new THREE.Vector3());
+    if (next.type === 'spin') {
+      // Drag along the front of the turntable: right turns it one way, left the other.
+      const front = this.toScreen(this.floatToWorld(new THREE.Vector3(0.85, 0, 0.85)));
+      const side = this.toScreen(this.floatToWorld(new THREE.Vector3(0.85, 0, -0.85))).sub(front).normalize();
+      const b = front.clone().addScaledVector(side, (next.turn === 1 ? 1 : -1) * 120);
+      this.stage.setRingHint(true);
+      this.hinting = true;
+      await this.hud.showHand(front, b);
+      return;
+    }
     const b2 = this.toScreen(center.clone().addScaledVector(DIR_VEC[next.dir], 1));
     const v = b2.sub(a).normalize().multiplyScalar(Math.max(120, this.dragThreshold() * 1.6));
     const b = a.clone().add(v);
@@ -482,7 +504,8 @@ export class Game {
     const next = solve(this.level, this.state)?.[0];
     if (!next) return;
     this.hinting = true;
-    this.relic.setHint(next.dir);
+    if (next.type === 'spin') this.stage.setRingHint(true);
+    else this.relic.setHint(next.dir);
   }
 
   // ------------------------------------------------------------ input
@@ -548,6 +571,38 @@ export class Game {
     }
   }
 
+  /** Turning on the pedestal: the pointer's angle around the relic is the turn. */
+  private turnStart(x: number, y: number) {
+    if (this.hud.current !== 'play' || this.inputLocked) {
+      this.turnDrag = null;
+      return;
+    }
+    this.hud.hideHand();
+    const c = this.relicCenterScreen();
+    this.turnDrag = { cx: c.x, cy: c.y, last: Math.atan2(y - c.y, x - c.x), angle: 0 };
+  }
+
+  private turnMove(x: number, y: number) {
+    const t = this.turnDrag;
+    if (!t) return;
+    const a = Math.atan2(y - t.cy, x - t.cx);
+    let d = a - t.last;
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    t.last = a;
+    // Screen y points down, so a clockwise drag on screen is a counter-clockwise turn from above.
+    t.angle = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, t.angle - d));
+    this.relic.setTurnPreview(t.angle);
+  }
+
+  private turnEnd(cancelled: boolean) {
+    const t = this.turnDrag;
+    this.turnDrag = null;
+    if (!t) return;
+    if (!cancelled && Math.abs(t.angle) > 0.35) void this.perform({ type: 'spin', turn: (t.angle > 0 ? 1 : -1) as Turn });
+    else if (t.angle !== 0) void this.relic.cancelTurn();
+  }
+
   private tap(hitRelic: boolean) {
     const screen = this.hud.current;
     if (screen === 'title') {
@@ -583,7 +638,9 @@ export class Game {
       this.dragStart();
       this.dragMove(x * len, y * len);
       this.dragEnd(x * len, y * len, false);
-    } else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') void this.undo();
+    } else if (e.key === 'q' || e.key === 'Q') void this.perform({ type: 'spin', turn: 1 });
+    else if (e.key === 'e' || e.key === 'E') void this.perform({ type: 'spin', turn: -1 });
+    else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') void this.undo();
     else if (e.key === 'r' || e.key === 'R') void this.reset();
 
   }
@@ -593,9 +650,11 @@ export class Game {
   update(dt: number) {
     this.anim.update(dt);
     if (this.spinSpeed) this.relic.spin += dt * this.spinSpeed;
+    // The turntable notches turn with the relic while it is being turned.
+    this.stage.turntable.rotation.y = this.hud.current === 'play' ? this.relic.spin : 0;
     this.relic.update(dt);
     this.stage.update(dt);
-    if (this.hud.current === 'play' && !this.inputLocked && !this.drag) {
+    if (this.hud.current === 'play' && !this.inputLocked && !this.drag && !this.turnDrag) {
       this.idle += dt;
       if (this.demoTimer >= 0) {
         this.demoTimer -= dt;
@@ -621,6 +680,7 @@ export class Game {
       hint: () => this.showIdleHint(),
       load: (i: number) => this.loadLevel(i, 'play'),
       relicScreen: () => this.relicCenterScreen(),
+      pedestalScreen: (x: number, z: number) => this.toScreen(this.floatToWorld(new THREE.Vector3(x, 0, z))),
       toppleScreenDir: (dir: Dir) => {
         const c = this.relicCenterScreen();
         const center = this.relic.root.getWorldPosition(new THREE.Vector3());

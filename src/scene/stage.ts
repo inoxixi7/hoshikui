@@ -43,6 +43,11 @@ export class Stage {
   private interacting = false;
   private time = 0;
   readonly shadow: THREE.Mesh;
+  /** Ring and notches on the pedestal top; turns with the relic. */
+  readonly turntable = new THREE.Group();
+  readonly turnPickables: THREE.Object3D[] = [];
+  private ringMat!: THREE.MeshBasicMaterial;
+  private ringHint = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !IS_MOBILE || window.devicePixelRatio < 2, powerPreference: 'high-performance' });
@@ -272,14 +277,22 @@ export class Stage {
     slab.geometry.computeVertexNormals();
     this.floating.add(slab);
 
-    // A faint engraved ring on the top surface.
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(1.12, 1.14, 64),
-      new THREE.MeshBasicMaterial({ color: 0x8a86b8, transparent: true, opacity: 0.18, depthWrite: false }),
-    );
+    // The top is a turntable: drag on it to turn the relic. Blue, like every other
+    // thing the player can move, with four notches that turn along with the relic.
+    this.ringMat = new THREE.MeshBasicMaterial({ color: PALETTE.vein, transparent: true, opacity: 0.55, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.125, 96), this.ringMat);
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = PEDESTAL_TOP + 0.003;
-    this.floating.add(ring);
+    this.turntable.add(ring);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const notch = new THREE.Mesh(new THREE.CircleGeometry(0.035, 12), this.ringMat);
+      notch.rotation.x = -Math.PI / 2;
+      notch.position.set(Math.cos(a) * 1.18, 0, Math.sin(a) * 1.18);
+      this.turntable.add(notch);
+    }
+    this.turntable.position.y = PEDESTAL_TOP + 0.004;
+    this.floating.add(this.turntable);
+    this.turnPickables.push(slab);
 
     // Small rocks drifting beneath the slab.
     const rockMat = new THREE.MeshStandardMaterial({ color: PALETTE.pedestal, roughness: 0.95, flatShading: true });
@@ -343,6 +356,9 @@ export class Stage {
       r.rotation.x += dt * 0.2;
       r.rotation.y += dt * 0.15;
     }
+    const ringPulse = this.ringHint ? 0.5 + 0.5 * Math.sin(this.time * 5) : 0;
+    this.ringMat.opacity = 0.45 + 0.1 * Math.sin(this.time * 1.5) + ringPulse * 0.5;
+    this.ringMat.color.setHex(PALETTE.vein).multiplyScalar(1 + ringPulse * 0.8);
     const pulse = 1 + Math.sin(this.time * 1.3) * 0.04;
     if (this.starSprite.userData.free !== true) this.starSprite.scale.setScalar(11 * pulse);
     if (!this.interacting) {
@@ -364,6 +380,11 @@ export class Stage {
     this.skyMat.uniforms.starGlow.value = k;
     this.starHalo.material.opacity = 0.2 * k;
     this.setShaftStrength(0.05 * k);
+  }
+
+  /** Pulse the turntable ring (hint that turning is the next move). */
+  setRingHint(on: boolean) {
+    this.ringHint = on ? 1 : 0;
   }
 
   setShaftStrength(s: number) {

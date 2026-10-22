@@ -63,4 +63,7 @@ export interface GameState {
   lit: string[];
 }
 
-export type Action = { type: 'topple'; dir: Dir };
+/** Turn on the pedestal: +1 counter-clockwise seen from above (about world +Y), -1 clockwise. */
+export type Turn = 1 | -1;
+
+export type Action = { type: 'topple'; dir: Dir } | { type: 'spin'; turn: Turn };

@@ -1,7 +1,7 @@
 // Pure puzzle rules: (level, state, action) -> new state.
 // Never import Three.js here; the renderer only reads what these return.
 
-import type { Action, Axis, Dir, EdgeDef, GameState, LevelDef, Mat3, Vec3 } from './types';
+import type { Action, Axis, Dir, EdgeDef, GameState, LevelDef, Mat3, Turn, Vec3 } from './types';
 import { cross, dot, normalize, sub } from './math';
 
 /** Fixed isometric view: unit vector from the relic towards the camera. */
@@ -62,6 +62,25 @@ export const TIP: Record<Dir, Mat3> = {
   // About -X by 90°: +Y → -Z.
   nz: [1, 0, 0, 0, 0, 1, 0, -1, 0],
 };
+
+/** Turning on the pedestal: a quarter turn about world Y. */
+export const SPIN: Record<Turn, Mat3> = {
+  1: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+  [-1]: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+};
+
+/** Rotation applied by an action (left-multiplied onto the orientation). */
+export const actionMat = (a: Action): Mat3 => (a.type === 'topple' ? TIP[a.dir] : SPIN[a.turn]);
+
+/** Short label for logs and tables: a push direction, or ↺ / ↻ for a turn. */
+export const actionLabel = (a: Action): string => (a.type === 'topple' ? a.dir : a.turn === 1 ? '↺' : '↻');
+
+/** The action that undoes `a`. */
+export function inverseAction(a: Action): Action {
+  if (a.type === 'spin') return { type: 'spin', turn: a.turn === 1 ? -1 : 1 };
+  const opp: Record<Dir, Dir> = { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' };
+  return { type: 'topple', dir: opp[a.dir] };
+}
 
 export function axisOf(v: Vec3): Axis {
   const [x, y, z] = v.map((c) => Math.round(c));
@@ -197,14 +216,16 @@ export function initialState(level: LevelDef): GameState {
 export type ActionResult = { ok: true; state: GameState; path: RollStep[] } | { ok: false; reason: 'unstable-face' };
 
 export function applyAction(level: LevelDef, state: GameState, action: Action): ActionResult {
-  const next = mulMat(TIP[action.dir], state.orient);
+  const next = mulMat(actionMat(action), state.orient);
   if (!isStable(level, next)) return { ok: false, reason: 'unstable-face' };
   const r = settle(level, next, state.dropletNode);
   return { ok: true, state: r.state, path: r.path };
 }
 
 export function legalActions(level: LevelDef, state: GameState): Action[] {
-  return DIRS.filter((d) => isStable(level, mulMat(TIP[d], state.orient))).map((dir) => ({ type: 'topple', dir }));
+  const tips: Action[] = DIRS.filter((d) => isStable(level, mulMat(TIP[d], state.orient))).map((dir) => ({ type: 'topple', dir }));
+  // Turning on the pedestal keeps the same face down, so it is always possible.
+  return [...tips, { type: 'spin', turn: 1 }, { type: 'spin', turn: -1 }];
 }
 
 export function isWon(level: LevelDef, state: GameState): boolean {

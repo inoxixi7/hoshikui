@@ -51,6 +51,24 @@ check('drag tumbles the relic', (await H(p, () => window.__hoshikui.state())).or
 await p.click('button[aria-label="undo"]');
 await idle(p);
 check('undo restores', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
+// 3b. Drag on the pedestal: the relic turns a quarter turn in place.
+{
+  const before = (await H(p, () => window.__hoshikui.state())).orient.join();
+  const f = await H(p, () => window.__hoshikui.pedestalScreen(0.85, 0.85));
+  const side = await H(p, () => window.__hoshikui.pedestalScreen(0.85, -0.85));
+  const vx = side.x - f.x, vy = side.y - f.y, len = Math.hypot(vx, vy);
+  await p.mouse.move(f.x, f.y); await p.mouse.down();
+  for (let k = 1; k <= 6; k++) await p.mouse.move(f.x + (vx / len) * 25 * k, f.y + (vy / len) * 25 * k);
+  await p.screenshot({ path: `${out}/ui-turn-mid.png` });
+  for (let k = 7; k <= 10; k++) await p.mouse.move(f.x + (vx / len) * 25 * k, f.y + (vy / len) * 25 * k);
+  await p.mouse.up();
+  await idle(p);
+  const after = await H(p, () => window.__hoshikui.state());
+  check('pedestal drag turns the relic', after.orient.join() === '0,0,1,0,1,0,-1,0,0', `${before} -> ${after.orient.join()}`);
+  await p.click('button[aria-label="undo"]');
+  await idle(p);
+  check('undo turns it back', (await H(p, () => window.__hoshikui.state())).orient.join() === before);
+}
 // 4. Menu overlay + sound toggle + long-press clear.
 await p.click('button[aria-label="menu"]');
 await wait(500);

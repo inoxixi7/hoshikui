@@ -5,7 +5,7 @@ import { LEVELS } from '../src/levels';
 import { VEINS } from '../src/levels/relic';
 import type { LevelDef } from '../src/puzzle/types';
 import { analyzeLevel } from '../src/puzzle/solver';
-import { AXES, IDENTITY, allNodes, allOrientations, computeLit, isStable, rollPath } from '../src/puzzle/rules';
+import { AXES, IDENTITY, actionLabel, allNodes, allOrientations, computeLit, isStable, rollPath } from '../src/puzzle/rules';
 import { isFaceNormal } from '../src/puzzle/geometry';
 import { dot } from '../src/puzzle/math';
 
@@ -89,7 +89,7 @@ LEVELS.forEach((level, index) => {
     { name: 'geometry', pass: geometry.length === 0, detail: geometry.length ? geometry.join('; ') : 'ok' },
   ];
   if (checks.some((c) => !c.pass)) failed = true;
-  rows.push([level.id, ...checks.map((c) => `${c.pass ? 'PASS' : 'FAIL'} ${c.detail}`), a.solution ? a.solution.map((x) => x.dir).join(' ') : '-']);
+  rows.push([level.id, ...checks.map((c) => `${c.pass ? 'PASS' : 'FAIL'} ${c.detail}`), a.solution ? a.solution.map(actionLabel).join(' ') : '-']);
   for (const d of a.deadEnds.slice(0, 5)) console.log(`  dead end in ${level.id}:`, JSON.stringify(d));
 });
 

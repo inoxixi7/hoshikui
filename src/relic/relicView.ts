@@ -2,8 +2,8 @@
 
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
-import type { Dir, GameState, LevelDef, Mat3, Vec3 } from '../puzzle/types';
-import { LIGHT_COS, STAR_DIR, TIP, allNodes, apply, matToQuat, mulMat, nodePos, overlaps, type RollStep } from '../puzzle/rules';
+import type { Dir, GameState, LevelDef, Mat3, Turn, Vec3 } from '../puzzle/types';
+import { LIGHT_COS, SPIN, STAR_DIR, TIP, allNodes, apply, matToQuat, mulMat, nodePos, overlaps, type RollStep } from '../puzzle/rules';
 import { supportDistance, supportPoints, centroid } from '../puzzle/geometry';
 import { VEINS } from '../levels/relic';
 import { PALETTE } from '../palette';
@@ -544,6 +544,31 @@ export class RelicView {
     this.syncJunctions(false);
   }
 
+  /** Live turn while the player drags on the turntable (radians, about world Y). */
+  setTurnPreview(angle: number) {
+    this.spin = angle;
+  }
+
+  /** Spring back from a turn preview that did not reach a quarter turn. */
+  async cancelTurn() {
+    const a0 = this.spin;
+    await this.anim.tween(0.28, (k) => (this.spin = a0 * (1 - k)), ease.outCubic);
+    this.spin = 0;
+  }
+
+  /** Finish a quarter turn on the pedestal from wherever the preview left it. */
+  async turn(turn: Turn, onSettle?: () => void) {
+    const a0 = this.spin;
+    const a1 = (turn * Math.PI) / 2;
+    await this.anim.tween(0.42 * Math.max(0.35, Math.abs(a1 - a0) / (Math.PI / 2)), (k) => (this.spin = a0 + (a1 - a0) * k), ease.outBack);
+    onSettle?.();
+    const orient = mulMat(SPIN[turn], this.state.orient);
+    this.baseQ.copy(quatOf(orient));
+    this.spin = 0;
+    this.state = { ...this.state, orient };
+    this.syncJunctions(false);
+  }
+
   /** Update light visuals; newly revealed grooves sweep into view before the droplet moves. */
   async updateLight(s: GameState, onNewLight?: () => void) {
     const prevLit = this.state.lit;
@@ -785,7 +810,7 @@ export class RelicView {
     }
 
     // Junction glints fade in once the relic settles into a matching angle.
-    const settled = !this.plan;
+    const settled = !this.plan && this.spin === 0;
     for (const j of this.junctions.values()) {
       const target = settled ? j.want : 0;
       j.level += (target - j.level) * (1 - Math.exp(-dt * (j.level > 1 ? 3 : 6)));
@@ -809,7 +834,7 @@ export class RelicView {
   }
 
   private updateBeam(c: CrackVis, m: THREE.Matrix4) {
-    const strength = this.starGone || this.plan ? 0 : c.level;
+    const strength = this.starGone || this.plan || (this.spin !== 0 && !this.breath) ? 0 : c.level;
     const hit = c.local.clone().applyMatrix4(m);
     c.beam.visible = strength > 0.01 && this.root.visible;
     if (c.beam.visible) {

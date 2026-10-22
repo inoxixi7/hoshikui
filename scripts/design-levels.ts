@@ -7,7 +7,7 @@ import type { CrackDef, EdgeDef, LevelDef, Mat3, Vec3 } from '../src/puzzle/type
 import { BASE_PLANES, VEINS, veinsFor } from '../src/levels/relic';
 import { plane, supportDistance, vertsFromPlanes, isFaceNormal } from '../src/puzzle/geometry';
 import { analyzeLevel } from '../src/puzzle/solver';
-import { IDENTITY, VIEW_DIR, allOrientations, applyAction, facingStar, initialState, orientKey, rollPath, computeLit } from '../src/puzzle/rules';
+import { IDENTITY, VIEW_DIR, actionLabel, allOrientations, applyAction, facingStar, initialState, orientKey, rollPath, computeLit } from '../src/puzzle/rules';
 import { dot } from '../src/puzzle/math';
 
 const [li = '0', triesArg = '20000', seedArg = '1'] = process.argv.slice(2);
@@ -154,7 +154,7 @@ for (let t = 0; t < tries; t++) {
   void orientCount;
   const score = moving / (a.minMoves || 1) + firstMoves * 0.15 + level.nodes.length * 0.03 + a.minMoves * 0.05 - Math.abs(a.reachable - 60) / 400;
   if (!best || score > best.score) {
-    best = { score, level, sol: (a.solution ?? []).map((x) => x.dir).join(' '), planes: b.planes };
+    best = { score, level, sol: (a.solution ?? []).map(actionLabel).join(' '), planes: b.planes };
   }
 }
 if (!best) {
