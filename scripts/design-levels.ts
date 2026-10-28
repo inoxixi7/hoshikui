@@ -123,6 +123,9 @@ for (let t = 0; t < tries; t++) {
   if (a.minMoves === null || a.minMoves < spec.range[0] || a.minMoves > spec.range[1]) continue;
   if (a.deadEnds.length || a.initialWon) continue;
   if (spec.needVeins && solvable({ ...level, veins: [] })) continue;
+  // The vein earned in the previous level must be the one that matters.
+  const newest = level.veins[level.veins.length - 1];
+  if (spec.needVeins && newest && solvable({ ...level, veins: level.veins.filter((v) => v !== newest) })) continue;
   if (spec.needLight && solvable({ ...level, edges: level.edges.filter((e) => !e.hidden) })) continue;
   if (!spec.needVeins && level.veins.length && !solvable({ ...level, veins: [] })) continue;
   // Prefer: the droplet moves on every step, many first moves do something, and the

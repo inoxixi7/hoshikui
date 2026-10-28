@@ -68,6 +68,8 @@ function needs(level: LevelDef, index: number): string[] {
   const noVeins = { ...level, veins: [] };
   if (want.light && solvable(noLight)) issues.push('solvable without light');
   if (want.veins && solvable(noVeins)) issues.push('solvable without veins');
+  const newest = level.veins[level.veins.length - 1];
+  if (want.veins && newest && solvable({ ...level, veins: level.veins.slice(0, -1) })) issues.push(`solvable without newest vein ${newest.id}`);
   return issues;
 }
 

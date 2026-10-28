@@ -284,6 +284,10 @@ export class RelicView {
       }
       this.veins.push({ id: v.id, lit, mat, ghost, glow: 0 });
     }
+    // The vein earned last level flares when the level opens: it is the one to use.
+    const newest = this.level.veins[this.level.veins.length - 1];
+    const nv = newest && this.veins.find((v) => v.id === newest.id);
+    if (nv) nv.glow = 1.6;
   }
 
   private buildCrack(lights: string, normal: Vec3, target: Vec3 | undefined, i: number) {
