@@ -2,9 +2,8 @@
 
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
-import type { Dir, GameState, LevelDef, Mat3, Turn, Vec3 } from '../puzzle/types';
-import { LIGHT_COS, SPIN, STAR_DIR, TIP, allNodes, apply, matToQuat, mulMat, nodePos, overlaps, type RollStep } from '../puzzle/rules';
-import { supportDistance, supportPoints, centroid } from '../puzzle/geometry';
+import type { Dir, GameState, LevelDef, Mat3, Vec3 } from '../puzzle/types';
+import { LIGHT_COS, SPIN, STAR_DIR, allNodes, apply, matToQuat, mulMat, nodePos, overlaps, type RollStep } from '../puzzle/rules';
 import { VEINS } from '../levels/relic';
 import { PALETTE } from '../palette';
 import { Animator, ease } from '../anim';
@@ -27,17 +26,6 @@ const quatOf = (m: Mat3) => {
   const q = matToQuat(m);
   return new THREE.Quaternion(q[0], q[1], q[2], q[3]);
 };
-
-/** How a topple (or a tilt toward one) moves the relic: a turn about its contact edge. */
-export interface TopplePlan {
-  axis: THREE.Vector3;
-  phi: number;
-  pivot: THREE.Vector3;
-  fromQ: THREE.Quaternion;
-  fromPos: THREE.Vector3;
-  correction: THREE.Vector3;
-  dir: THREE.Vector3;
-}
 
 interface EdgeVis {
   a: THREE.Vector3;
@@ -110,12 +98,13 @@ export class RelicView {
   /** Set when the star has been swallowed: no more beams. */
   starGone = false;
   private time = 0;
-  private plan: TopplePlan | null = null;
-  private planT = 0;
-  private planBlend = 0;
+  /** Live rotation while the player drags the relic (world space), or null. */
+  private drag: THREE.Quaternion | null = null;
+  private lift = 0;
   private wobble = 0;
   private flash = 0;
-  private hint: THREE.Vector3 | null = null;
+  private hint: THREE.Quaternion | null = null;
+  private hintPhase = 0;
   private state: GameState;
   private dropletLocal = new THREE.Vector3();
   private coreShards: { mesh: THREE.Mesh; dir: THREE.Vector3; spin: THREE.Vector3 }[] = [];
@@ -299,13 +288,11 @@ export class RelicView {
 
   private buildCrack(lights: string, normal: Vec3, target: Vec3 | undefined, i: number) {
     const n = v3(normal).normalize();
-    const pts = this.level.hullPoints;
-    const face = supportPoints(pts, normal).map(v3);
-    const center = new THREE.Vector3(...centroid(supportPoints(pts, normal)));
-    const d = supportDistance(pts, normal);
-    center.copy(center.clone().projectOnPlane(n).add(n.clone().multiplyScalar(d)));
-    const span = Math.max(...face.map((p) => p.distanceTo(center)));
-    const line = crackPolyline(center, n, Math.min(0.5, span * 1.1), 0.7 + i * 1.9);
+    // Cracks are carved into a face of the cube, a little off its centre.
+    const d = Math.max(...this.level.hullPoints.map((p) => v3(p).dot(n)));
+    const tangent = new THREE.Vector3(n.y, n.z, n.x);
+    const center = n.clone().multiplyScalar(d).addScaledVector(tangent, 0.12 * (i % 2 ? -1 : 1));
+    const line = crackPolyline(center, n, 0.62, 0.7 + i * 1.9);
     const rimMat = new THREE.MeshBasicMaterial({ color: PALETTE.vein, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
     const coreMat = new THREE.MeshBasicMaterial({ color: 0x07060c, side: THREE.DoubleSide, transparent: true, depthWrite: false });
     const rim = new THREE.Mesh(ribbonGeometry(line.map((p) => p.clone().addScaledVector(n, 0.006)), 0.1, n), rimMat);
@@ -365,7 +352,8 @@ export class RelicView {
     this.state = { ...s, lit: [...s.lit] };
     this.baseQ.copy(quatOf(s.orient));
     this.basePos.set(0, this.restY(this.baseQ), 0);
-    this.plan = null;
+    this.drag = null;
+    this.lift = 0;
     this.dropletLocal.copy(v3(nodePos(this.level, s.dropletNode)));
     this.trailHist = [];
     for (const e of this.edges) if (e.hidden) e.reveal = s.lit.includes(e.hidden) ? 1 : 0;
@@ -430,117 +418,90 @@ export class RelicView {
     }
   }
 
-  /** Compute the relic transform from base pose, tilt/topple plan and presentation offsets. */
+  /** Compute the relic transform from base orientation, live drag, hint nudge and offsets. */
   private applyTransform() {
-    const q = new THREE.Quaternion();
-    const pos = new THREE.Vector3();
-    if (this.plan) this.planTransform(this.plan, this.planT, this.planBlend, q, pos);
-    else {
-      q.copy(this.baseQ);
-      pos.copy(this.basePos);
+    const q = this.baseQ.clone();
+    if (this.drag) q.premultiply(this.drag);
+    else if (this.hint) {
+      // Idle hint: lean a little toward the next move, again and again.
+      const k = 0.16 * (0.5 - 0.5 * Math.cos(this.hintPhase));
+      q.premultiply(new THREE.Quaternion().slerp(this.hint, k));
     }
     if (this.wobble !== 0) q.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, this.wobble));
     if (this.spin !== 0) q.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, this.spin));
-    pos.y += this.hover;
     this.root.quaternion.copy(q);
-    this.root.position.copy(pos);
+    this.root.position.copy(this.basePos);
+    // While turned off its rest pose, keep every corner clear of the pedestal.
+    const clear = this.drag || this.lift > 0 ? Math.max(0, this.restY(q) - this.basePos.y) : 0;
+    this.root.position.y += this.hover + Math.max(this.lift, clear + (this.drag ? 0.06 : 0));
   }
 
-  private planTransform(p: TopplePlan, t: number, blend: number, outQ: THREE.Quaternion, outPos: THREE.Vector3) {
-    const r = new THREE.Quaternion().setFromAxisAngle(p.axis, p.phi * t);
-    outQ.copy(r).multiply(p.fromQ);
-    outPos.copy(p.fromPos).sub(p.pivot).applyQuaternion(r).add(p.pivot).addScaledVector(p.correction, blend);
+  // ---------------------------------------------------------------- free drag
+
+  /** Follow the player's drag: a rotation in world space applied on top of the rest pose. */
+  setDrag(q: THREE.Quaternion | null) {
+    this.drag = q ? q.clone() : null;
+    this.lift = q ? Math.min(0.14, this.lift + 0.04) : this.lift;
   }
 
-  /** Plan a 90° tumble over the contact edge on the `dir` side. */
-  planTopple(dir: Dir): TopplePlan {
-    const d = DIR_VEC[dir];
-    const fromQ = this.baseQ.clone();
-    const fromPos = this.basePos.clone();
-    const axis = new THREE.Vector3().crossVectors(UP, d).normalize();
-    const phi = Math.PI / 2;
-    const world = this.level.hullPoints.map((p) => v3(p).applyQuaternion(fromQ).add(fromPos));
-    const minY = Math.min(...world.map((w) => w.y));
-    const contact = world.filter((w) => w.y < minY + 0.03);
-    const best = Math.max(...contact.map((w) => w.dot(d)));
-    const edge = contact.filter((w) => w.dot(d) > best - 0.04);
-    const pivot = edge.reduce((acc, w) => acc.add(w), new THREE.Vector3()).multiplyScalar(1 / edge.length);
-    const r = new THREE.Quaternion().setFromAxisAngle(axis, phi);
-    const endQ = r.clone().multiply(fromQ);
-    const endPos = fromPos.clone().sub(pivot).applyQuaternion(r).add(pivot);
-    const correction = new THREE.Vector3(0, this.restY(endQ), 0).sub(endPos);
-    return { axis, phi, pivot, fromQ, fromPos, correction, dir: d.clone() };
+  get dragging(): boolean {
+    return this.drag !== null;
   }
 
-  // ---------------------------------------------------------------- drag tilt
-
-  setTilt(plan: TopplePlan | null, angle: number) {
-    this.plan = plan;
-    this.planT = plan ? Math.min(angle, plan.phi * 0.5) / plan.phi : 0;
-    this.planBlend = 0;
-  }
-
-  get tiltAngle(): number {
-    return this.plan ? this.plan.phi * this.planT : 0;
-  }
-
-  /** Spring back from a tilt. `refused` adds a little shake and a dim flash. */
-  async springBack(refused: boolean) {
-    const p = this.plan;
-    const t0 = this.planT;
-    if (refused) this.flash = 1;
+  /** The drag ended without reaching another orientation: ease back to rest. */
+  async cancelDrag() {
+    const from = this.drag ?? new THREE.Quaternion();
+    const l0 = this.lift;
     await this.anim.tween(
-      refused ? 0.42 : 0.3,
-      (k, raw) => {
-        if (!p) return;
-        this.plan = p;
-        this.planT = t0 * (1 - k) + (refused ? Math.sin(raw * Math.PI * 3) * (1 - raw) * 0.03 : 0);
+      0.28,
+      (k) => {
+        this.drag = from.clone().slerp(new THREE.Quaternion(), k);
+        this.lift = l0 * (1 - k);
       },
       ease.outCubic,
     );
-    this.plan = null;
-    this.planT = 0;
+    this.drag = null;
+    this.lift = 0;
   }
 
-  /** Refused action without a tilt: shake in place and flash dimly. */
+  /** Refused action: shake in place and flash dimly. */
   async refuse() {
     this.flash = 1;
     await this.anim.tween(0.38, (_k, raw) => (this.wobble = Math.sin(raw * Math.PI * 4) * (1 - raw) * 0.07), ease.linear);
     this.wobble = 0;
   }
 
-  // ---------------------------------------------------------------- actions
-
-  /** Tumble over the edge on the `dir` side, continuing from any tilt already applied. */
-  async topple(dir: Dir, onLand?: () => void) {
-    const fresh = this.planTopple(dir);
-    const continuing = this.plan && this.planT > 0 && this.plan.dir.equals(fresh.dir);
-    const t0 = continuing ? this.planT : 0;
-    this.plan = fresh;
+  /**
+   * Settle onto a new orientation (`m` applied in world space) from wherever the drag
+   * left the relic, then set it down on the pedestal.
+   */
+  async rotateTo(m: Mat3, onLand?: () => void) {
+    const orient = mulMat(m, this.state.orient);
+    const targetQ = quatOf(orient);
+    const startQ = this.baseQ.clone();
+    if (this.drag) startQ.premultiply(this.drag);
+    // Go the short way round.
+    if (startQ.dot(targetQ) < 0) targetQ.set(-targetQ.x, -targetQ.y, -targetQ.z, -targetQ.w);
+    const angle = 2 * Math.acos(Math.min(1, Math.abs(startQ.dot(targetQ))));
+    const l0 = Math.max(this.lift, this.drag ? 0 : 0.12);
+    this.drag = null;
+    this.baseQ.copy(startQ);
     await this.anim.tween(
-      0.45 * (1 - t0 * 0.6),
+      Math.max(0.22, Math.min(0.45, angle * 0.32)),
       (k) => {
-        this.planT = t0 + (1 - t0) * k;
-        this.planBlend = ease.smooth(k);
+        this.baseQ.copy(startQ).slerp(targetQ, k);
+        this.lift = l0 * (1 - k * k);
       },
       ease.outCubic,
     );
+    this.lift = 0;
     onLand?.();
-    // Landing: a short rebound around the contact edge.
-    await this.anim.tween(
-      0.22,
-      (_k, raw) => {
-        this.planT = 1 - Math.sin(raw * Math.PI) * 0.035 * (1 - raw * 0.5);
-        this.planBlend = 1;
-      },
-      ease.linear,
-    );
-    const orient = mulMat(TIP[dir], this.state.orient);
     this.baseQ.copy(quatOf(orient));
     this.basePos.set(0, this.restY(this.baseQ), 0);
-    this.plan = null;
-    this.planT = 0;
     this.state = { ...this.state, orient };
+    // A small settle as it lands.
+    await this.anim.tween(0.18, (_k, raw) => (this.lift = Math.sin(raw * Math.PI) * 0.025), ease.linear);
+    this.lift = 0;
     this.syncJunctions(false);
   }
 
@@ -566,7 +527,7 @@ export class RelicView {
     await this.anim.tween(Math.max(0.16, Math.min(0.45, Math.abs(a1 - a0) * 0.5)), (k) => (this.spin = a0 + (a1 - a0) * k), ease.outCubic);
     onSettle?.();
     let orient = this.state.orient;
-    const turn: Turn = quarters > 0 ? 1 : -1;
+    const turn = quarters > 0 ? 1 : -1;
     for (let i = 0; i < Math.abs(quarters); i++) orient = mulMat(SPIN[turn], orient);
     this.baseQ.copy(quatOf(orient));
     this.spin = 0;
@@ -647,8 +608,15 @@ export class RelicView {
 
   // ---------------------------------------------------------------- feedback
 
-  setHint(dir: Dir | null) {
-    this.hint = dir ? DIR_VEC[dir].clone() : null;
+  /** Idle hint: lean toward the next move (a world-space rotation), or stop. */
+  setHint(m: Mat3 | null) {
+    this.hint = m ? quatOf(m) : null;
+    this.hintPhase = 0;
+  }
+
+  /** Preview part of a move (0..1) while the demo hand drags. */
+  setDemoLean(m: Mat3 | null, k: number) {
+    this.drag = m && k > 0 ? new THREE.Quaternion().slerp(quatOf(m), k) : null;
   }
 
   /** Success: the droplet sinks into the core, light bursts outward, the next vein lights. */
@@ -815,7 +783,7 @@ export class RelicView {
     }
 
     // Junction glints fade in once the relic settles into a matching angle.
-    const settled = !this.plan && this.spin === 0;
+    const settled = !this.drag && this.spin === 0;
     for (const j of this.junctions.values()) {
       const target = settled ? j.want : 0;
       j.level += (target - j.level) * (1 - Math.exp(-dt * (j.level > 1 ? 3 : 6)));
@@ -828,18 +796,12 @@ export class RelicView {
 
     for (const c of this.cracks) this.updateBeam(c, m);
 
-    // Topple hint: a soft glow at the pedestal edge on that side.
-    const hm = this.hintGlow.material;
-    if (this.hint) {
-      const k = 0.5 + 0.5 * Math.sin(this.time * 3.2);
-      this.hintGlow.position.copy(this.hint).multiplyScalar(1.0).setY(PEDESTAL_TOP + 0.08);
-      this.hintGlow.scale.setScalar(0.9 + k * 0.3);
-      hm.opacity = 0.25 + 0.45 * k;
-    } else hm.opacity = Math.max(0, hm.opacity - dt * 2);
+    if (this.hint) this.hintPhase += dt * 2.4;
+    this.hintGlow.material.opacity = 0;
   }
 
   private updateBeam(c: CrackVis, m: THREE.Matrix4) {
-    const strength = this.starGone || this.plan || (this.spin !== 0 && !this.breath) ? 0 : c.level;
+    const strength = this.starGone || this.drag || (this.spin !== 0 && !this.breath) ? 0 : c.level;
     const hit = c.local.clone().applyMatrix4(m);
     c.beam.visible = strength > 0.01 && this.root.visible;
     if (c.beam.visible) {

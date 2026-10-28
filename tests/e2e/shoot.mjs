@@ -34,10 +34,10 @@ if (scenario === 'basic' || scenario === 'play') {
   for (const [i, a] of sol.entries()) {
     {
       const c = await desktop.evaluate(() => window.__hoshikui.relicScreen());
-      const d = await desktop.evaluate((dir) => window.__hoshikui.toppleScreenDir(dir), a.dir);
+      const d = await desktop.evaluate((key) => window.__hoshikui.dragFor(key), a.m.join(','));
       await desktop.mouse.move(c.x, c.y);
       await desktop.mouse.down();
-      for (let k = 1; k <= 12; k++) await desktop.mouse.move(c.x + d.x * 12 * k, c.y + d.y * 12 * k);
+      for (let k = 1; k <= 12; k++) await desktop.mouse.move(c.x + (d.x * k) / 12, c.y + (d.y * k) / 12);
       if (i === 0) await desktop.screenshot({ path: `${out}/desktop-tilt.png` });
       await desktop.mouse.up();
     }

@@ -45,11 +45,14 @@ check('short drag springs back', JSON.stringify(await H(p, () => window.__hoshik
   check('small sideways drag snaps back', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
 }
 // 3. Undo/reset buttons.
-const d = await H(p, () => window.__hoshikui.toppleScreenDir('px'));
 const c2 = await H(p, () => window.__hoshikui.relicScreen());
-await p.mouse.move(c2.x, c2.y); await p.mouse.down(); await p.mouse.move(c2.x + d.x * 160, c2.y + d.y * 160, { steps: 12 }); await p.mouse.up();
+const ppr = await H(p, () => window.__hoshikui.pxPerRadian());
+await p.mouse.move(c2.x, c2.y); await p.mouse.down();
+for (let k = 1; k <= 12; k++) await p.mouse.move(c2.x + (ppr * 1.57 * k) / 12, c2.y + k * 0.5);
+await p.screenshot({ path: `${out}/ui-free-drag.png` });
+await p.mouse.up();
 await idle(p);
-check('drag tumbles the relic', (await H(p, () => window.__hoshikui.state())).orient.join() === '0,1,0,-1,0,0,0,0,1');
+check('free drag turns the relic', (await H(p, () => window.__hoshikui.state())).orient.join() !== '1,0,0,0,1,0,0,0,1');
 await p.click('button[aria-label="undo"]');
 await idle(p);
 check('undo restores', JSON.stringify(await H(p, () => window.__hoshikui.state())) === s0);
@@ -106,12 +109,12 @@ await p.click('.chapter >> nth=2');
 await wait(300);
 await idle(p);
 check('chapter 3 loaded', (await H(p, () => window.__hoshikui.level())) === 2);
-// Play chapter 3 with real drags along the solver's solution: it needs the vein illusion.
+// Play chapter 3 with real free drags along the solver's solution: it needs the vein illusion.
 const sol3 = await H(p, () => window.__hoshikui.solve());
 for (const act of sol3) {
-  const dd = await H(p, (dir) => window.__hoshikui.toppleScreenDir(dir), act.dir);
+  const dd = await H(p, (key) => window.__hoshikui.dragFor(key), act.m.join(','));
   const cc = await H(p, () => window.__hoshikui.relicScreen());
-  await p.mouse.move(cc.x, cc.y); await p.mouse.down(); await p.mouse.move(cc.x + dd.x * 160, cc.y + dd.y * 160, { steps: 10 }); await p.mouse.up();
+  await p.mouse.move(cc.x, cc.y); await p.mouse.down(); await p.mouse.move(cc.x + dd.x, cc.y + dd.y, { steps: 14 }); await p.mouse.up();
   await idle(p);
   await p.screenshot({ path: `${out}/ui-l3-step.png` });
 }
@@ -126,14 +129,14 @@ await p.touchscreen.tap(m0.x, m0.y);
 await wait(200); await idle(p);
 check('touch tap starts', (await H(p, () => window.__hoshikui.screen())) === 'play');
 const cdp = await p.context().newCDPSession(p);
-const md = await H(p, () => window.__hoshikui.toppleScreenDir('nz'));
+const mppr = await H(p, () => window.__hoshikui.pxPerRadian());
 const mc = await H(p, () => window.__hoshikui.relicScreen());
-const pts = Array.from({ length: 10 }, (_, i) => ({ x: mc.x + md.x * 12 * i, y: mc.y + md.y * 12 * i }));
+const pts = Array.from({ length: 10 }, (_, i) => ({ x: mc.x, y: mc.y + (mppr * 1.57 * i) / 9 }));
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pts[0]] });
 for (const pt of pts.slice(1)) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [pt] }); await wait(16); }
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 await idle(p);
-check('touch swipe tumbles', (await H(p, () => window.__hoshikui.state())).orient.join() === '1,0,0,0,0,1,0,-1,0');
+check('touch swipe turns the relic', (await H(p, () => window.__hoshikui.state())).orient.join() !== '1,0,0,0,1,0,0,0,1');
 await p.screenshot({ path: `${out}/ui-mobile-after.png` });
 
 console.log(results.join('\n'));

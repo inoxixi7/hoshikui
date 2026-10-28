@@ -1,11 +1,11 @@
-// The one relic every level is carved from: a chipped basalt cube. Its five
-// star veins run along outer edges; each solved level lights the next one.
+// The one relic every level is carved from: a basalt cube. Its five star veins
+// run along outer edges; each solved level lights the next one.
 import type { Vec3, VeinDef } from '../puzzle/types';
 import { type Plane, plane } from '../puzzle/geometry';
 
 export const H = 0.6; // half size
 
-/** The six resting faces plus chips that never touch a vein. */
+/** The six faces of the cube; it can rest on any of them. */
 export const BASE_PLANES: Plane[] = [
   plane([1, 0, 0], H),
   plane([-1, 0, 0], H),
@@ -13,13 +13,6 @@ export const BASE_PLANES: Plane[] = [
   plane([0, -1, 0], H),
   plane([0, 0, 1], H),
   plane([0, 0, -1], H),
-  // Chamfers on edges that carry no vein.
-  plane([-1, -1, 0], 0.7),
-  plane([0, -1, -1], 0.73),
-  plane([-1, 0, -1], 0.69),
-  plane([1, -1, 0], 0.76),
-  plane([-1, 1, -1], 0.92),
-  plane([1, -1, 1], 0.9),
 ];
 
 const seg = (a: Vec3, b: Vec3): Vec3[] => [a, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], b];

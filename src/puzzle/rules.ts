@@ -2,7 +2,7 @@
 // Never import Three.js here; the renderer only reads what these return.
 
 import type { Action, Axis, Dir, EdgeDef, GameState, LevelDef, Mat3, Turn, Vec3 } from './types';
-import { cross, dot, normalize, sub } from './math';
+import { cross, dot, normalize, quatFromAxisAngle, sub } from './math';
 
 /** Fixed isometric view: unit vector from the relic towards the camera. */
 export const VIEW_DIR: Vec3 = normalize([1, 1, 1]);
@@ -11,11 +11,12 @@ export const VIEW_UP: Vec3 = normalize([-1, 2, -1]);
 export const VIEW_RIGHT: Vec3 = normalize(cross(VIEW_UP, VIEW_DIR));
 
 /**
- * World direction towards the distant star: just behind the relic, a little above it
- * on screen, so it always hangs in the frame of the fixed view.
+ * World direction towards the distant star. It shines from the left of the screen,
+ * across the lower-left face of the relic (world +Z), so a lit face is always one the
+ * player can see.
  */
-export const STAR_DIR: Vec3 = normalize([-VIEW_DIR[0] + 0.4 * VIEW_UP[0], -VIEW_DIR[1] + 0.4 * VIEW_UP[1], -VIEW_DIR[2] + 0.4 * VIEW_UP[2]]);
-export const LIGHT_COS = Math.cos((25 * Math.PI) / 180);
+export const STAR_DIR: Vec3 = normalize([-0.25, 0.35, 1]);
+export const LIGHT_COS = Math.cos((30 * Math.PI) / 180);
 export const ROLL_THRESHOLD = 0.35;
 export const MAX_ROLL_STEPS = 64;
 /** Two points line up on screen when their projections are this close (world units). */
@@ -70,17 +71,30 @@ export const SPIN: Record<Turn, Mat3> = {
 };
 
 /** Rotation applied by an action (left-multiplied onto the orientation). */
-export const actionMat = (a: Action): Mat3 => (a.type === 'topple' ? TIP[a.dir] : SPIN[a.turn]);
+export const actionMat = (a: Action): Mat3 => a.m;
 
-/** Short label for logs and tables: a push direction, or ↺ / ↻ for a turn. */
-export const actionLabel = (a: Action): string => (a.type === 'topple' ? a.dir : a.turn === 1 ? '↺' : '↻');
+export const rotateAction = (m: Mat3): Action => ({ type: 'rotate', m });
+
+/** Short label for logs and tables: rotation axis and angle, e.g. "y+90". */
+export function actionLabel(a: Action): string {
+  const m = a.m;
+  const tr = m[0] + m[4] + m[8];
+  const angle = Math.round((Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2))) * 180) / Math.PI);
+  let axis: Vec3 = [m[7] - m[5], m[2] - m[6], m[3] - m[1]];
+  if (angle === 180) {
+    // Axis from the symmetric part: (M + I) / 2 = a·aᵀ.
+    const d = [(m[0] + 1) / 2, (m[4] + 1) / 2, (m[8] + 1) / 2];
+    const i = d.indexOf(Math.max(...d));
+    const col = [m[i] + (i === 0 ? 1 : 0), m[3 + i] + (i === 1 ? 1 : 0), m[6 + i] + (i === 2 ? 1 : 0)];
+    axis = normalize(col as Vec3);
+  }
+  const n = normalize(axis).map((c) => Math.round(c * 100) / 100);
+  const name = n.map((c, i) => (Math.abs(c) < 0.01 ? '' : `${c < 0 ? '-' : ''}${'xyz'[i]}`)).join('');
+  return `${name}${angle === 180 ? '' : '+'}${angle}`;
+}
 
 /** The action that undoes `a`. */
-export function inverseAction(a: Action): Action {
-  if (a.type === 'spin') return { type: 'spin', turn: a.turn === 1 ? -1 : 1 };
-  const opp: Record<Dir, Dir> = { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' };
-  return { type: 'topple', dir: opp[a.dir] };
-}
+export const inverseAction = (a: Action): Action => ({ type: 'rotate', m: transpose(a.m) });
 
 export function axisOf(v: Vec3): Axis {
   const [x, y, z] = v.map((c) => Math.round(c));
@@ -216,16 +230,16 @@ export function initialState(level: LevelDef): GameState {
 export type ActionResult = { ok: true; state: GameState; path: RollStep[] } | { ok: false; reason: 'unstable-face' };
 
 export function applyAction(level: LevelDef, state: GameState, action: Action): ActionResult {
-  const next = mulMat(actionMat(action), state.orient);
+  if (!ROTATIONS.has(orientKey(action.m))) return { ok: false, reason: 'unstable-face' };
+  const next = mulMat(action.m, state.orient);
   if (!isStable(level, next)) return { ok: false, reason: 'unstable-face' };
   const r = settle(level, next, state.dropletNode);
   return { ok: true, state: r.state, path: r.path };
 }
 
+/** Every move one free drag (or a push, or a pedestal turn) can make. */
 export function legalActions(level: LevelDef, state: GameState): Action[] {
-  const tips: Action[] = DIRS.filter((d) => isStable(level, mulMat(TIP[d], state.orient))).map((dir) => ({ type: 'topple', dir }));
-  // Turning on the pedestal keeps the same face down, so it is always possible.
-  return [...tips, { type: 'spin', turn: 1 }, { type: 'spin', turn: -1 }];
+  return DRAG_ROTATIONS.filter((m) => isStable(level, mulMat(m, state.orient))).map(rotateAction);
 }
 
 export function isWon(level: LevelDef, state: GameState): boolean {
@@ -286,4 +300,47 @@ export function allOrientations(): Mat3[] {
       }
     }
   return [...seen.values()];
+}
+
+const ROTATIONS = new Set(allOrientations().map(orientKey));
+
+/**
+ * The rotations a single free drag can end on. A drag turns the relic about an axis
+ * in the screen plane by up to half a turn; on release it settles on the nearest
+ * cube orientation. Sampled once, finely, from the fixed view.
+ */
+export const DRAG_ROTATIONS: Mat3[] = (() => {
+  const all = allOrientations();
+  const qs = all.map(matToQuat);
+  const hit = new Set<number>();
+  for (let a = 0; a < 360; a += 1)
+    for (let t = 1; t <= 180; t += 1) {
+      const ang = (a * Math.PI) / 180;
+      const axis: Vec3 = [0, 1, 2].map((i) => VIEW_UP[i] * Math.cos(ang) + VIEW_RIGHT[i] * Math.sin(ang)) as Vec3;
+      hit.add(nearestIndex(qs, quatFromAxisAngle(axis, (t * Math.PI) / 180)));
+    }
+  return all.filter((m, i) => hit.has(i) && orientKey(m) !== orientKey(IDENTITY));
+})();
+
+function nearestIndex(qs: number[][], q: number[]): number {
+  let best = 0;
+  let bestDot = -1;
+  qs.forEach((r, i) => {
+    const d = Math.abs(r[0] * q[0] + r[1] * q[1] + r[2] * q[2] + r[3] * q[3]);
+    if (d > bestDot) {
+      bestDot = d;
+      best = i;
+    }
+  });
+  return best;
+}
+
+/**
+ * Snap a free rotation (quaternion, world space) to the nearest move a drag can make,
+ * or null if it is closest to not moving at all.
+ */
+export function snapDrag(q: [number, number, number, number]): Mat3 | null {
+  const cands = [IDENTITY, ...DRAG_ROTATIONS];
+  const i = nearestIndex(cands.map(matToQuat), q);
+  return i === 0 ? null : cands[i];
 }

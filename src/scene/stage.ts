@@ -7,7 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PALETTE } from '../palette';
-import { STAR_DIR, VIEW_DIR } from '../puzzle/rules';
+import { STAR_DIR, VIEW_DIR, VIEW_RIGHT, VIEW_UP } from '../puzzle/rules';
 import { glowTexture, shadowTexture, starTexture } from './textures';
 
 export const IS_MOBILE =
@@ -83,7 +83,7 @@ export class Stage {
     this.starsMat = this.buildStarfield();
 
     // The star: the single light source of the world.
-    this.starPos = new THREE.Vector3(...STAR_DIR).multiplyScalar(STAR_DISTANCE);
+    this.starPos = new THREE.Vector3(...STAR_DIR).multiplyScalar(STAR_DISTANCE); // placed for the screen in resize()
     this.starSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: starTexture(), color: 0xfff1d6, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }),
     );
@@ -103,13 +103,14 @@ export class Stage {
     // Lighting: a warm key from the star, cold fill from below, dim ambient.
     // Lighting reads like a carved drawing: bright tops, mid right faces, deep left faces,
     // plus a warm rim from the star behind.
-    const top = new THREE.DirectionalLight(0xe2deff, 2.3);
+    const top = new THREE.DirectionalLight(0xd8d4ff, 1.7);
     top.position.set(0.5, 4, 1.2);
-    const right = new THREE.DirectionalLight(0x9da2ff, 1.25);
+    const right = new THREE.DirectionalLight(0x8c90f0, 0.75);
     right.position.set(4, 0.8, 0.6);
-    const left = new THREE.DirectionalLight(0x6a6fd8, 0.55);
+    const left = new THREE.DirectionalLight(0x6a6fd8, 0.25);
     left.position.set(0.4, 0.6, 4);
-    const key = new THREE.DirectionalLight(0xffd59a, 1.6);
+    // The star lights the face turned toward it (screen lower-left) warm and bright.
+    const key = new THREE.DirectionalLight(0xffd59a, 1.9);
     key.position.copy(new THREE.Vector3(...STAR_DIR).multiplyScalar(10));
     const amb = new THREE.HemisphereLight(0x3c4090, 0x0a0812, 0.9);
     this.scene.add(top, right, left, key, amb);
@@ -343,6 +344,32 @@ export class Stage {
     this.backCam.aspect = aspect;
     this.backCam.fov = aspect < 1 ? 74 : 62;
     this.backCam.updateProjectionMatrix();
+    this.placeStar();
+  }
+
+  /**
+   * The star shines from the left of the screen. Its light (STAR_DIR) is what the rules
+   * use; in the backdrop it is drawn in the same screen direction, pulled inside the
+   * frame so it stays visible on narrow screens too.
+   */
+  private placeStar() {
+    const star = new THREE.Vector3(...STAR_DIR);
+    const right = new THREE.Vector3(...VIEW_RIGHT);
+    const up = new THREE.Vector3(...VIEW_UP);
+    const screen = new THREE.Vector2(star.dot(right), star.dot(up) + 0.35).normalize();
+    const halfV = THREE.MathUtils.degToRad(this.backCam.fov / 2);
+    const halfH = Math.atan(Math.tan(halfV) * this.backCam.aspect);
+    const theta = Math.min(THREE.MathUtils.degToRad(34), halfH * 0.78);
+    const dir = VIEW.clone()
+      .negate()
+      .multiplyScalar(Math.cos(theta))
+      .add(right.multiplyScalar(screen.x * Math.sin(theta)))
+      .add(up.multiplyScalar(screen.y * Math.sin(theta)))
+      .normalize();
+    this.starPos.copy(dir).multiplyScalar(STAR_DISTANCE);
+    if (this.starSprite.userData.free !== true) this.starSprite.position.copy(this.starPos);
+    this.starHalo.position.copy(this.starPos);
+    this.skyMat.uniforms.starDir.value.copy(dir);
   }
 
   /** Screen-space size of one world unit in CSS pixels (orthographic). */

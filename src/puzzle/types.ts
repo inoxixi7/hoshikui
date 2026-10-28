@@ -66,4 +66,8 @@ export interface GameState {
 /** Turn on the pedestal: +1 counter-clockwise seen from above (about world +Y), -1 clockwise. */
 export type Turn = 1 | -1;
 
-export type Action = { type: 'topple'; dir: Dir } | { type: 'spin'; turn: Turn };
+/**
+ * Every move is a rotation of the relic in world space (left-multiplied onto its
+ * orientation): a free drag, a push over an edge, or a turn on the pedestal.
+ */
+export type Action = { type: 'rotate'; m: Mat3 };

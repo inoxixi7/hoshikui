@@ -2,11 +2,11 @@
 
 import * as THREE from 'three';
 import { LEVELS } from './levels';
-import type { Action, Dir, GameState, LevelDef, Turn } from './puzzle/types';
-import { DIRS, TIP, applyAction, initialState, inverseAction, isStable, isWon, mulMat, type RollStep } from './puzzle/rules';
+import type { Action, Dir, GameState, LevelDef, Mat3, Turn } from './puzzle/types';
+import { DIRS, DRAG_ROTATIONS, SPIN, TIP, VIEW_RIGHT, VIEW_UP, applyAction, initialState, inverseAction, isWon, orientKey, rotateAction, snapDrag, type RollStep } from './puzzle/rules';
 import { solve } from './puzzle/solver';
 import { Stage } from './scene/stage';
-import { DIR_VEC, RelicView, type TopplePlan } from './relic/relicView';
+import { DIR_VEC, RelicView } from './relic/relicView';
 import { ShatterField } from './relic/transition';
 import { Hud } from './ui/hud';
 import { PointerInput } from './input/pointer';
@@ -14,8 +14,6 @@ import { sfx } from './audio/sfx';
 import { Animator, ease } from './anim';
 import { type SaveData, clearSave, loadSave, writeSave } from './save';
 
-const MAX_TILT = THREE.MathUtils.degToRad(15);
-const REFUSED_TILT = THREE.MathUtils.degToRad(8);
 const IDLE_HINT_S = 30;
 
 interface HistoryEntry {
@@ -24,11 +22,32 @@ interface HistoryEntry {
   path: RollStep[];
 }
 
-interface DragCandidate {
-  dir: Dir;
-  valid: boolean;
-  screen: THREE.Vector2;
-  plan: TopplePlan;
+const UP_W = new THREE.Vector3(...VIEW_UP);
+const RIGHT_W = new THREE.Vector3(...VIEW_RIGHT);
+
+/** Free drag: the screen drag (px) as a world rotation about an axis in the screen plane. */
+function dragRotation(dx: number, dy: number, pxPerRadian: number): THREE.Quaternion {
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return new THREE.Quaternion();
+  // Dragging right turns the near face right (about screen-up); dragging down turns it down (about screen-right).
+  const axis = UP_W.clone().multiplyScalar(dx).addScaledVector(RIGHT_W, dy).normalize();
+  return new THREE.Quaternion().setFromAxisAngle(axis, Math.min(Math.PI, len / pxPerRadian));
+}
+
+/** A drag (screen px) that ends on rotation `m`, for the demo hand. */
+function dragFor(m: Mat3, pxPerRadian: number): THREE.Vector2 {
+  let best: THREE.Vector2 | null = null;
+  for (let t = 10; t <= 180 && !best; t += 5)
+    for (let a = 0; a < 360; a += 5) {
+      const d = new THREE.Vector2(Math.cos((a * Math.PI) / 180), Math.sin((a * Math.PI) / 180)).multiplyScalar(((t * Math.PI) / 180) * pxPerRadian);
+      const q = dragRotation(d.x, d.y, pxPerRadian);
+      const snap = snapDrag([q.x, q.y, q.z, q.w]);
+      if (snap && orientKey(snap) === orientKey(m)) {
+        best = d;
+        break;
+      }
+    }
+  return best ?? new THREE.Vector2(pxPerRadian, 0);
 }
 
 export class Game {
@@ -47,7 +66,7 @@ export class Game {
   private refusals = 0;
   private demoShown = false;
   private demoTimer = -1;
-  private drag: { candidates: DragCandidate[]; choice: DragCandidate | null; dist: number } | null = null;
+  private drag: { dx: number; dy: number } | null = null;
   private turnDrag: { x0: number; angle: number } | null = null;
   private spinSpeed = 0;
   private overlayReturn: 'title' | 'play' = 'play';
@@ -314,11 +333,7 @@ export class Game {
     this.refusals = 0;
     this.history.push({ prev, action, path: r.path });
     this.hud.setUndoEnabled(true);
-    if (action.type === 'topple') await this.relic.topple(action.dir, () => sfx.land());
-    else {
-      sfx.fold();
-      await this.relic.turnBy(action.turn);
-    }
+    await this.relic.rotateTo(action.m, () => sfx.land());
     await this.relic.updateLight(r.state, () => sfx.light());
     if (r.path.length > 1) await this.relic.roll(r.path, (i) => sfx.roll(i));
     this.state = r.state;
@@ -351,12 +366,7 @@ export class Game {
     sfx.tap();
     const prev = h.prev;
     const jobs: Promise<void>[] = [this.relic.rewindDroplet(h.path)];
-    const back = inverseAction(h.action);
-    if (back.type === 'topple') jobs.push(this.relic.topple(back.dir, () => sfx.land()));
-    else {
-      sfx.fold();
-      jobs.push(this.relic.turnBy(back.turn));
-    }
+    jobs.push(this.relic.rotateTo(inverseAction(h.action).m, () => sfx.land()));
     await Promise.all(jobs);
     await this.relic.updateLight(prev);
     this.state = prev;
@@ -469,34 +479,21 @@ export class Game {
     if (!next) return;
     this.demoShown = true;
     const a = this.relicCenterScreen();
-    const center = this.relic.root.getWorldPosition(new THREE.Vector3());
-    if (next.type === 'spin') {
-      // A sideways swipe beside the relic turns it.
-      const front = this.toScreen(this.floatToWorld(new THREE.Vector3(1.1, 0, 1.1)));
-      front.x = a.x - (next.turn === 1 ? 1 : -1) * this.quarterPx * 0.5;
-      const b = front.clone().add(new THREE.Vector2((next.turn === 1 ? 1 : -1) * this.quarterPx, 0));
-      this.stage.setRingHint(true);
-      this.hinting = true;
-      await this.hud.showHand(front, b);
-      return;
-    }
-    const b2 = this.toScreen(center.clone().addScaledVector(DIR_VEC[next.dir], 1));
-    const v = b2.sub(a).normalize().multiplyScalar(Math.max(120, this.dragThreshold() * 1.6));
-    const b = a.clone().add(v);
-    const plan = this.relic.planTopple(next.dir);
-    // The relic leans along with the hand, then settles back.
+    const d = dragFor(next.m, this.pxPerRadian);
+    const b = a.clone().add(d);
+    // The relic follows the hand part of the way, then eases back.
     void this.anim
       .tween(
         1.9,
         (_k, raw) => {
           if (this.drag) return;
           const lean = raw < 0.28 ? 0 : raw < 0.7 ? (raw - 0.28) / 0.42 : Math.max(0, 1 - (raw - 0.7) / 0.25);
-          this.relic.setTilt(plan, MAX_TILT * 0.7 * ease.inOutSine(Math.min(1, lean)));
+          this.relic.setDemoLean(next.m, 0.55 * ease.inOutSine(Math.min(1, lean)));
         },
         ease.linear,
         false,
       )
-      .then(() => !this.drag && this.relic.setTilt(null, 0));
+      .then(() => !this.drag && this.relic.setDemoLean(null, 0));
     await this.hud.showHand(a, b);
   }
 
@@ -504,14 +501,14 @@ export class Game {
     const next = solve(this.level, this.state)?.[0];
     if (!next) return;
     this.hinting = true;
-    if (next.type === 'spin') this.stage.setRingHint(true);
-    else this.relic.setHint(next.dir);
+    this.relic.setHint(next.m);
   }
 
   // ------------------------------------------------------------ input
 
-  private dragThreshold(): number {
-    return Math.min(window.innerWidth, window.innerHeight) * 0.08;
+  /** Drag distance (px) that turns the relic one radian: about its on-screen radius. */
+  private get pxPerRadian(): number {
+    return Math.max(70, this.stage.pixelsPerUnit * 0.75);
   }
 
   private dragStart() {
@@ -520,55 +517,30 @@ export class Game {
       return;
     }
     this.hud.hideHand();
-    const c = this.relicCenterScreen();
-    const center = this.relic.root.getWorldPosition(new THREE.Vector3());
-    // Every push tips the relic over the edge on that side; only a face that cannot
-    // hold it (none on the current relics, but the rules allow it) refuses.
-    const candidates: DragCandidate[] = DIRS.map((dir) => {
-      const s = this.toScreen(center.clone().addScaledVector(DIR_VEC[dir], 0.8)).sub(c);
-      return { dir, valid: isStable(this.level, mulMat(TIP[dir], this.state.orient)), screen: s.normalize(), plan: this.relic.planTopple(dir) };
-    });
-    this.drag = { candidates, choice: null, dist: 0 };
+    this.drag = { dx: 0, dy: 0 };
   }
 
+  /** The relic turns freely under the finger, like a die held in the hand. */
   private dragMove(dx: number, dy: number) {
     const d = this.drag;
     if (!d) return;
-    const dist = Math.hypot(dx, dy);
-    d.dist = dist;
-    if (dist < 6) {
-      d.choice = null;
-      this.relic.setTilt(null, 0);
-      return;
-    }
-    const v = new THREE.Vector2(dx, dy).normalize();
-    let best = d.candidates[0];
-    for (const c of d.candidates) if (c.screen.dot(v) > best.screen.dot(v)) best = c;
-    d.choice = best;
-    const k = 1 - Math.exp(-dist / (this.dragThreshold() * 0.9));
-    this.relic.setTilt(best.plan, (best.valid ? MAX_TILT : REFUSED_TILT) * k);
+    d.dx = dx;
+    d.dy = dy;
+    if (Math.hypot(dx, dy) < 4) return;
+    this.relic.setDrag(dragRotation(dx, dy, this.pxPerRadian));
   }
 
   private dragEnd(dx: number, dy: number, cancelled: boolean) {
     const d = this.drag;
     this.drag = null;
     if (!d) return;
-    const dist = Math.hypot(dx, dy);
-    if (cancelled || dist < this.dragThreshold() || !d.choice) {
-      if (this.relic.tiltAngle > 0) void this.relic.springBack(false);
+    const q = dragRotation(dx, dy, this.pxPerRadian);
+    const m = cancelled ? null : snapDrag([q.x, q.y, q.z, q.w]);
+    if (!m) {
+      if (this.relic.dragging) void this.relic.cancelDrag();
       return;
     }
-    if (d.choice.valid) void this.perform({ type: 'topple', dir: d.choice.dir });
-    else {
-      sfx.refuse();
-      this.refusals++;
-      void this.relic.springBack(true).then(() => {
-        if (this.refusals >= 3) {
-          this.refusals = 0;
-          void this.showDemo();
-        }
-      });
-    }
+    void this.perform(rotateAction(m));
   }
 
   /**
@@ -616,7 +588,7 @@ export class Game {
     const path: RollStep[] = [{ node: st.dropletNode }];
     const entries: HistoryEntry[] = [];
     for (let i = 0; i < Math.abs(quarters); i++) {
-      const action: Action = { type: 'spin', turn };
+      const action: Action = rotateAction(SPIN[turn]);
       const r = applyAction(this.level, st, action);
       if (!r.ok) break;
       entries.push({ prev: st, action, path: r.path });
@@ -668,12 +640,22 @@ export class Game {
     if (arrows[e.key]) {
       e.preventDefault();
       const [x, y] = arrows[e.key];
-      const len = this.dragThreshold() * 1.5;
-      this.dragStart();
-      this.dragMove(x * len, y * len);
-      this.dragEnd(x * len, y * len, false);
-    } else if (e.key === 'q' || e.key === 'Q') void this.perform({ type: 'spin', turn: 1 });
-    else if (e.key === 'e' || e.key === 'E') void this.perform({ type: 'spin', turn: -1 });
+      // Push over the edge whose direction on screen best matches the arrow.
+      const c = this.relicCenterScreen();
+      const center = this.relic.root.getWorldPosition(new THREE.Vector3());
+      const want = new THREE.Vector2(x, y);
+      let best: Dir = 'px';
+      let bestDot = -2;
+      for (const dir of DIRS) {
+        const sv = this.toScreen(center.clone().addScaledVector(DIR_VEC[dir], 0.8)).sub(c).normalize();
+        if (sv.dot(want) > bestDot) {
+          bestDot = sv.dot(want);
+          best = dir;
+        }
+      }
+      void this.perform(rotateAction(TIP[best]));
+    } else if (e.key === 'q' || e.key === 'Q') void this.perform(rotateAction(SPIN[1]));
+    else if (e.key === 'e' || e.key === 'E') void this.perform(rotateAction(SPIN[-1]));
     else if (e.key === 'z' || e.key === 'Z' || e.key === 'Backspace') void this.undo();
     else if (e.key === 'r' || e.key === 'R') void this.reset();
 
@@ -716,6 +698,11 @@ export class Game {
       relicScreen: () => this.relicCenterScreen(),
       pedestalScreen: (x: number, z: number) => this.toScreen(this.floatToWorld(new THREE.Vector3(x, 0, z))),
       quarterPx: () => this.quarterPx,
+      pxPerRadian: () => this.pxPerRadian,
+      dragFor: (key: string) => {
+        const m = DRAG_ROTATIONS.find((r) => orientKey(r) === key);
+        return m ? dragFor(m, this.pxPerRadian) : null;
+      },
       toppleScreenDir: (dir: Dir) => {
         const c = this.relicCenterScreen();
         const center = this.relic.root.getWorldPosition(new THREE.Vector3());

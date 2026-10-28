@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { LevelDef, Mat3, Vec3 } from '../src/puzzle/types';
 import {
+  AXES,
+  DRAG_ROTATIONS,
   IDENTITY,
   SPIN,
+  VIEW_UP,
+  axisOf,
+  orientKey,
+  rotateAction,
+  snapDrag,
   TIP,
   actionMat,
   inverseAction,
@@ -12,7 +19,6 @@ import {
   applyAction,
   computeLit,
   downAxis,
-  facingStar,
   initialState,
   isWon,
   legalActions,
@@ -117,32 +123,46 @@ describe('droplet rolling', () => {
 });
 
 describe('actions', () => {
-  it('refuses to tip onto a face the relic cannot rest on', () => {
-    const lvl = fixture({ stableFaces: ['ny', 'nx', 'pz', 'nz', 'py'] });
-    const s = initialState(lvl);
-    expect(applyAction(lvl, s, { type: 'topple', dir: 'px' })).toEqual({ ok: false, reason: 'unstable-face' });
-    expect(legalActions(lvl, s)).not.toContainEqual({ type: 'topple', dir: 'px' });
-    expect(legalActions(lvl, s).filter((a) => a.type === 'topple')).toHaveLength(3);
+  it('a free drag can reach the four pushes and the pedestal turns, and nothing else is needed', () => {
+    const keys = DRAG_ROTATIONS.map(orientKey);
+    for (const m of [...Object.values(TIP), SPIN[1], SPIN[-1]]) expect(keys).toContain(orientKey(m));
+    expect(DRAG_ROTATIONS.length).toBeGreaterThanOrEqual(10);
+    expect(keys).not.toContain(orientKey(IDENTITY));
   });
 
-  it('turning on the pedestal keeps the same face down and is always allowed', () => {
+  it('snaps a free drag to the nearest reachable move, or to none', () => {
+    expect(snapDrag([0, 0, 0, 1])).toBeNull();
+    // A 100° drag about screen-up lands on some quarter-turn-like move, not identity.
+    const s = Math.sin((100 * Math.PI) / 360);
+    const m = snapDrag([VIEW_UP[0] * s, VIEW_UP[1] * s, VIEW_UP[2] * s, Math.cos((100 * Math.PI) / 360)]);
+    expect(m).not.toBeNull();
+    expect(DRAG_ROTATIONS.map(orientKey)).toContain(orientKey(m as Mat3));
+  });
+
+  it('refuses to land on a face the relic cannot rest on', () => {
+    const lvl = fixture({ stableFaces: ['ny', 'nx', 'pz', 'nz', 'py'] });
+    const s = initialState(lvl);
+    expect(applyAction(lvl, s, rotateAction(TIP.px))).toEqual({ ok: false, reason: 'unstable-face' });
+    expect(legalActions(lvl, s).map((a) => orientKey(a.m))).not.toContain(orientKey(TIP.px));
+  });
+
+  it('turning on the pedestal keeps the same face down', () => {
     const lvl = fixture();
     const s = initialState(lvl);
     for (const turn of [1, -1] as const) {
-      const r = applyAction(lvl, s, { type: 'spin', turn });
+      const r = applyAction(lvl, s, rotateAction(SPIN[turn]));
       expect(r.ok).toBe(true);
       if (r.ok) {
         expect(downAxis(r.state.orient)).toBe('ny');
         expect(r.path).toHaveLength(1); // gravity unchanged: the droplet stays put
       }
-      expect(legalActions(lvl, s)).toContainEqual({ type: 'spin', turn });
     }
     // A quarter turn counter-clockwise from above carries local +X to world -Z.
     close(apply(SPIN[1], [1, 0, 0]), [0, 0, -1]);
     expect(mulMat(SPIN[1], SPIN[-1])).toEqual(IDENTITY);
   });
 
-  it('every action has an exact inverse', () => {
+  it('every move has an exact inverse', () => {
     for (const a of legalActions(fixture(), initialState(fixture())))
       expect(mulMat(actionMat(inverseAction(a)), actionMat(a))).toEqual(IDENTITY);
   });
@@ -151,20 +171,22 @@ describe('actions', () => {
 describe('starlight', () => {
   it('lights a crack facing the star and the revealed groove carries the droplet', () => {
     const target: Mat3 = mulMat(TIP.nz, TIP.px); // gravity now pulls toward local -Z
-    const lvl = fixture({ cracks: [{ id: 'c', normal: facingStar(target), lights: 'sun' }] });
+    // A crack on the local face that ends up looking at the star in that orientation.
+    const face = AXES[axisOf(apply(transpose(target), [0, 0, 1]))];
+    const lvl = fixture({ cracks: [{ id: 'c', normal: face, lights: 'sun' }] });
     expect(computeLit(lvl, IDENTITY)).toEqual([]);
     expect(computeLit(lvl, target)).toEqual(['sun']);
     const atEast = { orient: TIP.px, dropletNode: 'east', lit: [] };
-    const r = applyAction(lvl, atEast, { type: 'topple', dir: 'nz' });
+    const r = applyAction(lvl, atEast, rotateAction(TIP.nz));
     expect(r.ok && r.state.lit).toEqual(['sun']);
     expect(r.ok && r.state.dropletNode).toBe('back');
     expect(r.ok && isWon(lvl, r.state)).toBe(true);
   });
 
   it('a hidden groove stays shut while its crack is dark', () => {
-    const lvl = fixture({ cracks: [{ id: 'c', normal: facingStar(IDENTITY), lights: 'sun' }] });
+    const lvl = fixture({ cracks: [{ id: 'c', normal: [0, 1, 0], lights: 'sun' }] });
     const atEast = { orient: TIP.px, dropletNode: 'east', lit: [] };
-    const r = applyAction(lvl, atEast, { type: 'topple', dir: 'nz' });
+    const r = applyAction(lvl, atEast, rotateAction(TIP.nz));
     expect(r.ok && r.state.lit).toEqual([]);
     expect(r.ok && r.state.dropletNode).toBe('east');
   });
